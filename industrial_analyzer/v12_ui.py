@@ -207,7 +207,14 @@ class Login(Q.QDialog):
         choice.currentTextChanged.connect(switch);l.addWidget(label("Create administrator" if self.first else "Welcome back","heading"));l.addWidget(label("Create a local administrator to open real datasets." if self.first else "Sign in to continue to your analysis workspace.","sub"))
         self.user=Q.QLineEdit();self.user.setMaxLength(40);self.user.setPlaceholderText("Enter username");self.pw=password();self.pw.setPlaceholderText("Enter password")
         l.addWidget(label("Username","sub"));l.addWidget(self.user);l.addWidget(label("Password","sub"));l.addWidget(self.pw);self.confirm=password()
-        if self.first:l.addWidget(label("Confirm password","sub"));l.addWidget(self.confirm)
+        if self.first:
+            l.addWidget(label("Confirm password","sub"));l.addWidget(self.confirm)
+            l.addWidget(label("Username: 3–40 letters, digits, dots, hyphens or underscores. Password: 12–256 characters.","sub"))
+        reveal=Q.QCheckBox("Show password")
+        def reveal_password(on):
+            mode=Q.QLineEdit.EchoMode.Normal if on else Q.QLineEdit.EchoMode.Password
+            self.pw.setEchoMode(mode);self.confirm.setEchoMode(mode)
+        reveal.toggled.connect(reveal_password);l.addWidget(reveal)
         self.error=label("","status");self.error.hide();l.addWidget(self.error)
         if self.allow_demo:l.addWidget(btn("Explore demo (no account)",self.demo))
         submit=btn("Create administrator →" if self.first else "Sign in →",self.submit,"primary");submit.setDefault(True);l.addWidget(submit)
@@ -299,7 +306,7 @@ class Desktop(LegacyApp):
         self.open_btn.setText("Open data file" if self.session.allows("Open data files") else "Open data · Sign in")
         self.open_btn.setToolTip("Select TDMS, TXT, CSV or Excel recordings." if self.session.allows("Open data files") else "Sign in or create a local administrator to import real recordings.")
         for i in (6,7):self.nav[i].setEnabled(self.session.allows("Advanced diagnostics"))
-        self.account_btn.setText("     Access & Users" if self.session.allows("Manage users") else "     My Account")
+        self.account_btn.setText("     Sign in / Create account" if self.session.demo else ("     Access & Users" if self.session.allows("Manage users") else "     My Account"))
     def permitted(self,key):
         if not self.session.allows(key):return False
         if self.session.demo:return True
@@ -680,21 +687,40 @@ class Desktop(LegacyApp):
                 try:Path(path).write_text(edit.toPlainText(),encoding="utf-8");self.audit("Report exported")
                 except OSError as exc:Q.QMessageBox.warning(self,"Export failed",str(exc))
     def account(self):
+        if self.session.demo:
+            if not self.ensure_access("Open data files"):return
         dlg=Q.QDialog(self);dlg.resize(1050,720);dlg.setWindowTitle("Workspace Security Center");l=Q.QVBoxLayout(dlg);l.setContentsMargins(25,25,25,25);l.addWidget(label("IDENTITY & ACCESS","micro"));l.addWidget(label("Workspace Security Center","heading"));l.addWidget(label(self.session.username+" · "+self.session.role,"sub"));l.addWidget(label("Local security: passwords are salted and hashed. Audit records are not tamper-proof. Protect the application-data directory using OS access controls.","status"))
         tabs=Q.QTabWidget();l.addWidget(tabs,1)
-        u=Q.QWidget();ul=Q.QVBoxLayout(u);tabs.addTab(u,"Users & Roles");t=table_card(ul,"Registered Users",["Username","Role","Status"],[],250)
+        u=Q.QWidget();ul=Q.QVBoxLayout(u);user_scroll=Q.QScrollArea();user_scroll.setWidgetResizable(True);user_scroll.setWidget(u);tabs.addTab(user_scroll,"Users & Roles");t=table_card(ul,"Registered Users",["Username","Role","Status"],[],180)
         def refresh():
             fill(t,["Username","Role","Status"],[(n,r,"Active" if e else "Disabled") for n,r,e in self.store.users(self.session)])
         if self.permitted("Manage users"):
-            w,wl=frame();ul.addWidget(w);card_title(wl,"Create a user");name=Q.QLineEdit();name.setMaxLength(40);pw=password();role=combo(list(ROLES),1);r=row();wl.addLayout(r);field(r,"USERNAME",name);field(r,"TEMPORARY PASSWORD (12+)",pw);field(r,"ACCESS ROLE",role)
+            w,wl=frame();ul.addWidget(w);card_title(wl,"Create a user","Username: 3–40 letters, digits, dots, hyphens or underscores. Password: 12–256 characters. Both password entries must match.")
+            name=Q.QLineEdit();name.setObjectName("newUserName");name.setMaxLength(40);name.setPlaceholderText("e.g. engineer01")
+            pw=password();pw.setObjectName("newUserPassword");confirm=password();confirm.setObjectName("newUserConfirm")
+            role=combo(list(ROLES),1);role.setObjectName("newUserRole")
+            r=row();wl.addLayout(r);field(r,"USERNAME",name);field(r,"ACCESS ROLE",role)
+            r=row();wl.addLayout(r);field(r,"PASSWORD (12+ CHARACTERS)",pw);field(r,"CONFIRM PASSWORD",confirm)
+            reveal=Q.QCheckBox("Show passwords");wl.addWidget(reveal)
+            def reveal_password(on):
+                mode=Q.QLineEdit.EchoMode.Normal if on else Q.QLineEdit.EchoMode.Password
+                pw.setEchoMode(mode);confirm.setEchoMode(mode)
+            reveal.toggled.connect(reveal_password)
+            feedback=label("Enter the account details.","status");feedback.setObjectName("newUserFeedback");wl.addWidget(feedback)
             def create():
-                try:self.store.create(self.session,name.text().strip(),pw.text(),role.currentText());name.clear();pw.clear();refresh()
-                except (ValueError,PermissionError) as exc:Q.QMessageBox.warning(dlg,"Account",str(exc))
+                try:
+                    if pw.text()!=confirm.text():raise ValueError("Passwords do not match.")
+                    username=name.text().strip()
+                    self.store.create(self.session,username,pw.text(),role.currentText())
+                    name.clear();pw.clear();confirm.clear();reveal.setChecked(False);refresh()
+                    feedback.setText("User created successfully: "+username)
+                except (ValueError,PermissionError) as exc:feedback.setText(str(exc))
             def toggle():
                 if t.currentRow()<0:return
                 try:self.store.toggle(self.session,t.item(t.currentRow(),0).text());refresh()
-                except (ValueError,PermissionError) as exc:Q.QMessageBox.warning(dlg,"Account",str(exc))
-            r.addWidget(btn("＋ Create user",create,"primary"));ul.addWidget(btn("Enable / Disable selected user",toggle))
+                except (ValueError,PermissionError) as exc:feedback.setText(str(exc))
+            create_btn=btn("Create user",create,"primary");create_btn.setAccessibleName("Create user");wl.addWidget(create_btn)
+            ul.addWidget(btn("Enable / Disable selected user",toggle))
         refresh()
         if self.permitted("Manage users"):
             w=Q.QWidget();wl=Q.QVBoxLayout(w);table_card(wl,"Permission Matrix",["Function",*ROLES],[(key,*["✓" if x else "—" for x in values]) for key,values in MATRIX.items()],300);tabs.addTab(w,"Permission Matrix")
