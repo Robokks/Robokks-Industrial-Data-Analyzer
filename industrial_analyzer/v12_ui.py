@@ -180,7 +180,7 @@ class Login(Q.QDialog):
 class Desktop(LegacyApp):
     def __init__(self,store,session):
         Q.QMainWindow.__init__(self)
-        self.store=store;self.session=session;self.data=reference_demo();self.source="Telegram_Demo_100_Parameters";self.selected=set(range(4));self.colors={};self.page=0;self.pages={};self.dirty=set(range(9));self._data_identity=id(self.data);self._stats={};self.last_activity=time.monotonic()
+        self.store=store;self.session=session;self.data=reference_demo();self.source="Telegram_Demo_100_Parameters";self.selected=set(range(4));self.colors={};self.page=0;self.pages={};self.dirty=set(range(9));self._data_identity=id(self.data);self._stats={};self.last_activity=time.monotonic();self.recordings=[];self.file_channel_count=0;self._active_job=None
         self.setWindowTitle("INDUSTRIAL / ANALYZER — V12.2 Desktop");self.resize(1440,900);self.setMinimumSize(1000,650)
         root=Q.QWidget();root.setObjectName("workspace");self.setCentralWidget(root);outer=Q.QHBoxLayout(root);outer.setContentsMargins(0,0,0,0);outer.setSpacing(0)
         side=Q.QFrame();side.setObjectName("sidebar");side.setFixedWidth(236);sl=Q.QVBoxLayout(side);sl.setContentsMargins(13,22,13,20);sl.setSpacing(5);outer.addWidget(side)
@@ -189,7 +189,7 @@ class Desktop(LegacyApp):
         self.nav=[]
         for i,n in enumerate(PAGES):
             b=btn(f"{ICONS[i]}   {n}",lambda checked=False,i=i:self.show_page(i),"nav");b.setCheckable(True);b.setMinimumHeight(44);sl.addWidget(b);self.nav.append(b)
-        sl.addSpacing(14);self.account_btn=btn("♙   Access & Users",self.account,"nav");sl.addWidget(self.account_btn);sl.addWidget(btn("♧   Lock / Sign out",self.lock,"nav"));sl.addStretch();sl.addWidget(label("OFFLINE WORKSPACE · V12.2\nSingle dataset at a time","sub"))
+        sl.addSpacing(10);self.extra_btn=btn("◈   Extended tools",self.extended_tools,"nav");sl.addWidget(self.extra_btn);self.account_btn=btn("♙   Access & Users",self.account,"nav");sl.addWidget(self.account_btn);sl.addWidget(btn("♧   Lock / Sign out",self.lock,"nav"));sl.addStretch();sl.addWidget(label("OFFLINE WORKSPACE · V12.2\nMulti-recording workspace","sub"))
         self.main=Q.QVBoxLayout();self.main.setContentsMargins(32,25,32,0);self.main.setSpacing(20);outer.addLayout(self.main,1)
         top=row();title=Q.QVBoxLayout();title.setSpacing(5);title.addWidget(label("ANALYSIS CONTROL CENTER","micro"));self.title=label(TITLES[0],"heading");title.addWidget(self.title);top.addLayout(title,1)
         self.userchip=label("","pill");self.badge=label("","pill");top.addWidget(self.userchip);top.addWidget(self.badge);self.open_btn=btn("＋ Open data file",self.open_file,"primary");top.addWidget(self.open_btn);top.addWidget(btn("Reset Demo",self.reset));self.main.addLayout(top)
@@ -202,7 +202,9 @@ class Desktop(LegacyApp):
             self.last_activity=time.monotonic()
         return False
     def check_idle(self):
-        if time.monotonic()-self.last_activity>=900:self.lock()
+        if time.monotonic()-self.last_activity>=900:
+            if self._active_job is not None:self._active_job.cancel.set()
+            else:self.lock()
     def apply_role(self):
         self.userchip.setText("● "+self.session.username+" · "+("Demo" if self.session.demo else self.session.role))
         self.open_btn.setEnabled(self.session.allows("Open data files"))
@@ -226,15 +228,32 @@ class Desktop(LegacyApp):
         self.pages.clear();self.dirty=set(range(9));self._data_identity=id(self.data);self._stats.clear();self.colors.clear()
     def selection_changed(self):
         self.dirty.update((0,1,2,5,8))
+    def extended_tools(self):
+        import extra_ui as ex
+        menu=Q.QMenu(self)
+        entries=[
+            ("Open multiple recordings",lambda:ex.open_recordings(self),self.permitted("Open data files")),
+            ("Append recordings",lambda:ex.open_recordings(self,True),self.permitted("Open data files")),
+            ("Large TDMS range browser / streamed statistics",lambda:ex.range_browser(self),self.permitted("Open data files")),
+            ("Save workspace manifest",lambda:ex.save_workspace(self),self.permitted("Export data & reports")),
+            ("Restore workspace manifest",lambda:ex.restore_workspace(self),self.permitted("Open data files")),
+            ("Extended engineering workstation",lambda:ex.EngineeringDialog(self).exec(),self.permitted("Advanced diagnostics") and self.permitted("Modify analysis settings")),
+            ("Independent-axis graph studio",lambda:ex.graph_studio(self),self.permitted("View trends & statistics")),
+            ("Batch statistical report",lambda:ex.batch_summary(self),self.permitted("Open data files") and self.permitted("Export data & reports")),
+            ("LabVIEW local TCP / UDP capture",lambda:ex.capture_dialog(self),self.permitted("Open data files") and self.permitted("Modify analysis settings")),
+            ("Export all-channel statistical summary",lambda:self.do_export(["Channel","Unit","Samples","Min","Max","Mean","RMS"],((c.name,c.unit,len(c.y),d.get("Min"),d.get("Max"),d.get("Mean"),d.get("RMS")) for c in self.data for d in [describe(c.y)])),self.permitted("Export data & reports")),
+        ]
+        for name,callback,allowed in entries:
+            a=menu.addAction(name);a.setEnabled(allowed);a.triggered.connect(lambda checked=False,callback=callback:callback())
+        menu.exec(self.extra_btn.mapToGlobal(C.QPoint(0,self.extra_btn.height())))
     def open_file(self):
-        if not self.permitted("Open data files"):return
-        old=id(self.data);LegacyApp.open_file(self)
-        if id(self.data)!=old:self.audit("File imported",self.source)
+        from extra_ui import open_recordings
+        open_recordings(self)
     def reset(self):
-        self.data=reference_demo();self.source="Telegram_Demo_100_Parameters";self.selected=set(range(4));self.show_page(self.page)
+        self.recordings=[];self.file_channel_count=0;self.data=reference_demo();self.source="Telegram_Demo_100_Parameters";self.selected=set(range(4));self.show_page(self.page)
     def do_export(self,headers,rows):
-        if not self.permitted("Export data & reports"):return
-        export(self,headers,rows);self.audit("Export requested")
+        from extra_ui import export_rows
+        export_rows(self,headers,rows)
     def export_selected(self):
         if not self.permitted("Export data & reports"):return
         self.do_export(["Channel","Unit","Time unit","Time","Value"],((c.name,c.unit,c.time_unit,t,y) for i,c in enumerate(self.data) if i in self.selected for t,y in zip(c.t,c.y)))
@@ -242,7 +261,7 @@ class Desktop(LegacyApp):
         self.idle.stop()
         for dlg in self.findChildren(Q.QDialog):
             if dlg.isVisible():dlg.reject()
-        self.audit("Sign out");self.hide();self.data=reference_demo();self.source="Telegram_Demo_100_Parameters";self.selected=set(range(4));self.dataset_changed()
+        self.audit("Sign out");self.hide();self.recordings=[];self.file_channel_count=0;self.data=reference_demo();self.source="Telegram_Demo_100_Parameters";self.selected=set(range(4));self.dataset_changed()
         dlg=Login(self.store,self)
         if dlg.exec()!=Q.QDialog.DialogCode.Accepted:self.close();return
         self.session=dlg.session;self.last_activity=time.monotonic();self.apply_role();self.show_page(0);self.show();self.idle.start(30000)
@@ -349,7 +368,7 @@ class Desktop(LegacyApp):
         h.addWidget(btn(f"☷ Browse {len(self.data)} channels ↗",browse,"primary"));h.addWidget(btn("↺ Restore four traces",restore));nums=kpis(v,[("Available signals",len(self.data)),("Active traces",len(self.selected)),("Visible samples",max(len(c.y) for c in self.data)),("Time window","Full")])
         bar,bl=frame("toolbar");v.addWidget(bar);rr=row();bl.addLayout(rr);width=field(rr,"WINDOW WIDTH",combo(["Full recording","50% of recording","25% of recording","10% of recording"]));pos=Q.QSlider(C.Qt.Orientation.Horizontal);pos.setRange(0,100);field(rr,"MOVE THROUGH RECORDING",pos);mode=field(rr,"CHART ARRANGEMENT",combo(["Two synchronized panels","One large panel"]));rr.addWidget(btn("↓ Export selected CSV / Excel",self.export_selected,"primary"))
         extra=row();bl.addLayout(extra);scale=field(extra,"Y-AXIS SCALE",combo(["Normalized (%)","Raw engineering values"]));dual=Q.QCheckBox("Dual measurement cursors");extra.addWidget(dual);extra.addStretch()
-        extra.addWidget(label("A/B cursors use full-resolution sample values.","sub"))
+        extra.addWidget(btn("A/B range statistics",lambda:interval_stats()));extra.addWidget(btn("Export A/B range",lambda:interval_export()))
         wa,la=frame();v.addWidget(wa);la.addWidget(label("PANEL A / PRIMARY SIGNALS","micro"));card_title(la,"Operating signal trends");p1=plot(420);la.addWidget(p1);read1=label("Hover over the graph to inspect values at the cursor.","status");la.addWidget(read1)
         wb,lb=frame();v.addWidget(wb);lb.addWidget(label("PANEL B / ADDITIONAL SIGNALS","micro"));card_title(lb,"Secondary signal trends");p2=plot(355);lb.addWidget(p2);read2=label("Hover over this graph to inspect secondary signals.","status");lb.addWidget(read2);p2.setXLink(p1)
         measurements=table_card(v,"A/B Cursor Measurements — panel A",["Signal","Unit","Δ time / samples","A value","B value","Δ value"],[],160)
@@ -384,6 +403,31 @@ class Desktop(LegacyApp):
                 else:m=cursor_measurement(c.t,c.y,a,b,c.time_ordered)
                 rows.append([c.name,c.unit,*m] if m else [c.name,c.unit,"—","—","—","—"])
             fill(measurements,["Signal","Unit","Δ time / samples","A value","B value","Δ value"],rows)
+        def interval_channels():
+            if not dual.isChecked():raise ValueError("Enable A/B cursors first")
+            ss=ids();ss=ss[:6] if mode.currentIndex()==0 else ss
+            mixed=len({self.data[i].time_unit for i in ss})>1
+            lo,hi=sorted(line.value() for line in cursor_lines)
+            for i in ss:
+                c=self.data[i]
+                if mixed:
+                    a=max(0,int(np.ceil(lo)));b=min(len(c.y),int(np.floor(hi))+1);ix=slice(a,max(a,b))
+                elif c.time_ordered:ix=slice(np.searchsorted(c.t,lo,"left"),np.searchsorted(c.t,hi,"right"))
+                else:ix=(c.t>=lo)&(c.t<=hi)
+                yield c,c.t[ix],c.y[ix]
+        def interval_stats():
+            from extra_ui import job,warn
+            try:
+                intervals=list(interval_channels());rows=job(self,"Cursor-range statistics",lambda stop:[(c.name,c.unit,*[d.get(k,"—") for k in ("Valid","Min","Max","Mean","RMS")]) for c,t,y in intervals for d in [describe(y)]])
+                d=Q.QDialog(self);d.resize(950,400);d.setWindowTitle("Cursor-range statistics");l=Q.QVBoxLayout(d);table_card(l,"Full-resolution samples within A/B",["Signal","Unit","Valid","Min","Max","Mean","RMS"],rows,250);l.addWidget(btn("Close",d.accept));d.exec()
+            except Exception as exc:warn(self,"Cursor range",exc)
+        def interval_export():
+            if not self.permitted("Export data & reports"):return
+            try:
+                # Snapshot GUI state on the GUI thread, not from the export worker.
+                intervals=list(interval_channels())
+                self.do_export(["Signal","Unit","Time unit","Time","Value"],((c.name,c.unit,c.time_unit,t,y) for c,ts,ys in intervals for t,y in zip(ts,ys)))
+            except ValueError as exc:Q.QMessageBox.warning(self,"Cursor range",str(exc))
         for line in cursor_lines:line.sigPositionChanged.connect(update_measurements)
         def color(i):
             col=Q.QColorDialog.getColor(G.QColor(self.colors.get(i,PALETTE[sorted(self.selected).index(i)%len(PALETTE)])),self)
@@ -510,7 +554,7 @@ class Desktop(LegacyApp):
     def advanced(self,v):
         w,l=frame("hero",26);v.addWidget(w);r=row();l.addLayout(r);a=Q.QVBoxLayout();r.addLayout(a,1);a.addWidget(label("ENGINEERING LAB / NEXT-LEVEL ANALYSIS","micro"));a.addWidget(label("Advanced Signal Diagnostics   ·   V11 / 10 TOOLS","heading"));a.addWidget(label("Ten focused workbenches for signal integrity, frequency content, transients and channel relationships.","sub"));r.addWidget(btn("↗ Immersive Trend Studio",lambda:self.show_page(2),"primary"));self.tabs(v,ADV,lambda name:AnalysisPane(self,name),5)
     def reports(self,v):
-        rr=row();v.addLayout(rr);w,l=frame();rr.addWidget(w,1);card_title(l,"Report Builder","Generate a concise engineering summary of the current dataset and selected signals.");bar=row();l.addLayout(bar);bar.addWidget(btn("Generate Summary",lambda:generate(),"primary"));bar.addWidget(btn("Download Report TXT",lambda:save()));l.addWidget(btn("Export Selected CSV / Excel",self.export_selected));l.addWidget(label("Export is generated locally on this desktop. No data is uploaded to a server.","status"))
+        rr=row();v.addLayout(rr);w,l=frame();rr.addWidget(w,1);card_title(l,"Report Builder","Generate a concise engineering summary of the current dataset and selected signals.");bar=row();l.addLayout(bar);bar.addWidget(btn("Generate Summary",lambda:generate(),"primary"));bar.addWidget(btn("Download Report TXT",lambda:save()));l.addWidget(btn("Export Selected CSV / Excel",self.export_selected));l.addWidget(btn("Download PDF report",lambda:save_pdf()));l.addWidget(label("Export is generated locally on this desktop. No data is uploaded to a server.","status"))
         w,l=frame();rr.addWidget(w,1);card_title(l,"Export Contents")
         for name,val in [("Source and channel count","Included"),("Selected signal statistics","Included"),("Time range and sample count","Included"),("CSV measurement data","Separate")]:
             r=row();r.addWidget(label(name,"sub"),1);r.addWidget(label(val));l.addLayout(r)
@@ -522,6 +566,10 @@ class Desktop(LegacyApp):
             for i in sorted(self.selected):
                 c=self.data[i];lines.append(f"{c.name} · {c.unit} · {len(c.y)} samples");lines.extend(f"  {k}: {fmt(x)}" for k,x in self.stats_for(i).items());lines.append("")
             edit.setPlainText("\n".join(lines));generated=True
+        def save_pdf():
+            from extra_ui import pdf_report
+            if not generated:generate()
+            if generated:pdf_report(self,edit.toPlainText())
         def save():
             if not self.permitted("Export data & reports") or not generated:return
             path,_=Q.QFileDialog.getSaveFileName(self,"Save report","","Text (*.txt)")
