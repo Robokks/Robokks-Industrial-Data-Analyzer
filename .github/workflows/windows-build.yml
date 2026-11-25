@@ -50,11 +50,18 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           [xml]$report = Get-Content tests.xml
           if (@($report.testsuites.testsuite | Where-Object { [int]$_.skipped -gt 0 }).Count) { throw "Skipped tests block packaging" }
+      - name: Upload native UI review screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V12-native-UI-review
+          path: ${{ env.PROJECT }}/ui_review/
+          if-no-files-found: warn
       - name: Security gates
         shell: pwsh
         run: |
           Set-Location $env:PROJECT
-          python -m bandit main.py engine.py safe_export.py
+          python -m bandit main.py engine.py safe_export.py v12_ui.py access.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pip_audit
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
@@ -67,7 +74,7 @@ jobs:
         shell: pwsh
         run: |
           Set-Location $env:PROJECT
-          python -m PyInstaller --noconfirm --clean --windowed --name IndustrialAnalyzer --collect-all pyqtgraph --collect-all nptdms --hidden-import analyzer_native main.py
+          python -m PyInstaller --noconfirm --clean --windowed --name IndustrialAnalyzer --collect-all pyqtgraph --collect-all nptdms --hidden-import analyzer_native --hidden-import v12_ui main.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $exe = Resolve-Path dist/IndustrialAnalyzer/IndustrialAnalyzer.exe
           $p = Start-Process $exe -PassThru

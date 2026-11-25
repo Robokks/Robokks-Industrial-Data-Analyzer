@@ -155,4 +155,5 @@ class App(Q.QMainWindow):
         rows=[(c.name,c.unit,c.time_unit,t,y) for j,c in enumerate(self.data) if j in self.selected for t,y in zip(c.t,c.y)];export(self,['Channel','Unit','Time unit','Time','Value'],rows)
 
 if __name__=='__main__':
-    app=Q.QApplication(sys.argv);app.setStyleSheet(STYLE);w=App();w.show();sys.exit(app.exec())
+    from v12_ui import run
+    sys.exit(run())
