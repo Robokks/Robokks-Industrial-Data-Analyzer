@@ -75,7 +75,8 @@ def desktop(tmp_path):
     from access import AccessStore,Session
     from v12_ui import Desktop,STYLE
     app=qt.QApplication.instance() or qt.QApplication([])
-    app.setStyleSheet(STYLE)
+    import ui_theme as theme
+    theme.apply(app,STYLE,"dark")
     store=AccessStore(tmp_path/"acceptance.sqlite3")
     win=Desktop(store,Session("Demo Engineer","Administrator",True))
     win.resize(1440,900);win.show();app.processEvents()
@@ -109,7 +110,7 @@ def test_fr_gui_search_selection_cursor_report(desktop,tmp_path,monkeypatch):
     save_widget(win,"acceptance-explorer-filter.png")
     win.nav[2].click();app.processEvents();page=win.pages[2]
     dual=next(x for x in page.findChildren(qt.QCheckBox) if "Dual" in x.text())
-    QTest.mouseClick(dual,Qt.MouseButton.LeftButton);app.processEvents();assert dual.isChecked()
+    win.scroll.ensureWidgetVisible(dual);app.processEvents();QTest.mouseClick(dual,Qt.MouseButton.LeftButton);app.processEvents();assert dual.isChecked()
     measure=next(t for t in page.findChildren(qt.QTableWidget) if t.columnCount()==6)
     assert measure.rowCount()==1 and measure.item(0,0).text()=="Parameter 042"
     mode=next(x for x in page.findChildren(qt.QComboBox) if x.itemText(0)=="Normalized (%)")

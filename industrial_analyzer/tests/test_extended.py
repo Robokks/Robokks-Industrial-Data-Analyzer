@@ -102,7 +102,9 @@ def test_extended_gui(tmp_path):
     from access import AccessStore, Session
     from v12_ui import Desktop,STYLE
     from extra_ui import EngineeringDialog,job
-    app=qt.QApplication.instance() or qt.QApplication([]);app.setStyleSheet(STYLE)
+    app=qt.QApplication.instance() or qt.QApplication([])
+    import ui_theme as theme
+    theme.apply(app,STYLE,"dark")
     store=AccessStore(tmp_path/"accounts.sqlite")
     win=Desktop(store,Session("Demo Engineer","Administrator",True))
     try:

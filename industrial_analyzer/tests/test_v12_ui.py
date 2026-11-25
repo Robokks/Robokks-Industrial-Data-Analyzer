@@ -41,7 +41,8 @@ def test_native_reference_screens(tmp_path):
     pytest.importorskip("pyqtgraph")
     from v12_ui import Desktop, Login, AnalysisPane, TITLES, STYLE, LAB, ADV
     app=qt.QApplication.instance() or qt.QApplication([])
-    app.setStyleSheet(STYLE)
+    import ui_theme as theme
+    theme.apply(app,STYLE,"dark")
     store=AccessStore(tmp_path/"ui.sqlite3")
     admin=store.setup("admin01","Strong demo password")
     output=Path("ui_review");output.mkdir(exist_ok=True)

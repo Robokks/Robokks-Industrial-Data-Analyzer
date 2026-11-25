@@ -10,6 +10,7 @@ import pyqtgraph as pg
 from main import App as LegacyApp, PAGES, LAB, ADV, PARAM, fmt, label, button, table, fill, export
 from engine import Channel, describe, analyze, paired, events
 from access import AccessStore, Session, ROLES, MATRIX
+import ui_theme as theme
 from performance import preview_indices, nearest_index, cursor_measurement
 
 TITLES = ["Analysis Overview","Data Explorer","Signal Trend Workspace","Statistical Analysis","Threshold Analysis","Signal Comparison","Engineering Analysis Lab","Advanced Signal Diagnostics","Reports & Export"]
@@ -26,7 +27,7 @@ QFrame#toolbar{background:#122d40;border:1px solid #34566c;border-radius:12px;}
 QLabel#heading{font-size:29px;font-weight:700;}
 QLabel#heroTitle{font-size:44px;font-weight:750;color:#e9f2fb;}
 QLabel#heroAccent{font-size:44px;font-weight:750;color:#73e5df;}
-QLabel#micro{font-size:10px;letter-spacing:1px;font-weight:800;color:#6bdbde;}
+QLabel#micro{font-size:11px;font-weight:700;color:#6bdbde;}
 QLabel#sub{font-size:12px;color:#9ab7c9;}
 QLabel#section{font-size:17px;font-weight:700;}
 QLabel#metricValue{font-size:30px;font-weight:750;}
@@ -67,11 +68,12 @@ def frame(kind="card", margins=19):
     return w,l
 
 def row():
-    l=Q.QHBoxLayout(); l.setSpacing(12); return l
+    return theme.AdaptiveRow()
 
 def btn(text,fn,kind=None):
     b=button(text,fn)
     if kind:b.setObjectName(kind)
+    b.setMinimumHeight(36);b.setCursor(C.Qt.CursorShape.PointingHandCursor);b.setToolTip(text.replace("\n"," "))
     return b
 
 def card_title(layout,title,subtitle=None):
@@ -88,7 +90,7 @@ def metric(title,value="—",sub=""):
     return w,n
 
 def kpis(parent,items,columns=4):
-    grid=Q.QGridLayout();grid.setSpacing(14);parent.addLayout(grid)
+    grid=theme.mark_grid(Q.QGridLayout(),columns,190);grid.setSpacing(14);parent.addLayout(grid)
     out=[]
     for i,item in enumerate(items):
         w,n=metric(*item);grid.addWidget(w,i//columns,i%columns);out.append(n)
@@ -96,11 +98,11 @@ def kpis(parent,items,columns=4):
     return out
 
 def plot(height=310):
-    p=pg.PlotWidget(background="#0b1726")
-    p.setMinimumHeight(height);p.showGrid(x=True,y=True,alpha=.24)
+    p=pg.PlotWidget(background=theme.colors()["plot"])
+    p.setMinimumHeight(height);p.setMinimumWidth(240);p.showGrid(x=True,y=True,alpha=.24)
     for a in ("left","bottom"):
-        p.getAxis(a).setPen(pg.mkPen("#34536a"));p.getAxis(a).setTextPen(pg.mkPen("#a7bdce"))
-    p.addLegend(offset=(12,12))
+        p.getAxis(a).setPen(pg.mkPen(theme.colors()["grid"]));p.getAxis(a).setTextPen(pg.mkPen(theme.colors()["axis"]))
+    p.addLegend(offset=(12,12),labelTextColor=theme.colors()["text"])
     p.setClipToView(True)
     return p
 
@@ -108,6 +110,7 @@ def draw(p,curves,colors=None):
     p.clear()
     for i,(x,y,n) in enumerate(curves):
         col=(colors or PALETTE)[i%len(colors or PALETTE)]
+        if theme.MODE=="light":col=dict(zip(PALETTE,["#087d98","#ae6006","#5656c0","#14845b","#c43f62","#8752a6","#286ab1","#a7780b"])).get(col,col)
         x=np.asarray(x);y=np.asarray(y)
         if n=="Histogram" and len(x)>1:
             p.addItem(pg.BarGraphItem(x=x,height=y,width=.9*abs(x[1]-x[0]),brush=col,pen=None))
@@ -123,7 +126,7 @@ def table_card(parent,title,headers,rows,minimum=240):
     w,l=frame();card_title(l,title);t=table(headers,rows);t.setMinimumHeight(minimum);t.setSelectionBehavior(Q.QAbstractItemView.SelectionBehavior.SelectRows);t.verticalHeader().hide();l.addWidget(t);parent.addWidget(w);return t
 
 def combo(names,index=0):
-    w=Q.QComboBox();w.addItems(names);w.setCurrentIndex(min(index,len(names)-1));w.setMinimumContentsLength(12);w.setSizeAdjustPolicy(Q.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon);return w
+    w=Q.QComboBox();w.addItems(names);w.setCurrentIndex(min(index,len(names)-1));w.setMinimumContentsLength(9);w.setToolTip(w.currentText());w.currentTextChanged.connect(w.setToolTip);w.setSizeAdjustPolicy(Q.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon);return w
 
 def number(value,lo=-1e9,hi=1e9,step=1,integer=False):
     w=Q.QSpinBox() if integer else Q.QDoubleSpinBox()
@@ -148,22 +151,25 @@ class Orbit(Q.QWidget):
         pen=G.QPen(G.QColor("#418d9b"),1,C.Qt.PenStyle.DashLine);p.setPen(pen);p.drawEllipse(C.QPointF(cx,cy),77,77)
         grad=G.QLinearGradient(cx-50,cy-50,cx+50,cy+50);grad.setColorAt(0,G.QColor("#1d8d9c"));grad.setColorAt(1,G.QColor("#1d4269"))
         p.setBrush(G.QBrush(grad));p.setPen(G.QPen(G.QColor("#83e6e9"),1));p.drawRoundedRect(C.QRectF(cx-50,cy-50,100,100),26,26)
-        p.setPen(G.QColor("#e9ffff"));f=G.QFont("Segoe UI",43);f.setBold(True);p.setFont(f);p.drawText(C.QRectF(cx-50,cy-50,100,100),C.Qt.AlignmentFlag.AlignCenter,"⌁")
-        p.setFont(G.QFont("Segoe UI",8));p.setPen(G.QColor("#a8eced"));p.drawText(C.QRectF(0,0,self.width(),18),C.Qt.AlignmentFlag.AlignCenter,"S I G N A L   I N T E L L I G E N C E");p.drawText(C.QRectF(0,self.height()-18,self.width(),18),C.Qt.AlignmentFlag.AlignCenter,"1 0 0 - C H A N N E L   R E A D Y")
+        p.setPen(G.QColor("#e9ffff"));f=G.QFont(theme.FONT,32);f.setBold(True);p.setFont(f);p.drawText(C.QRectF(cx-50,cy-50,100,100),C.Qt.AlignmentFlag.AlignCenter,"IA")
+        p.setFont(G.QFont(theme.FONT,8));p.setPen(G.QColor("#a8eced"));p.drawText(C.QRectF(0,0,self.width(),18),C.Qt.AlignmentFlag.AlignCenter,"S I G N A L   I N T E L L I G E N C E");p.drawText(C.QRectF(0,self.height()-18,self.width(),18),C.Qt.AlignmentFlag.AlignCenter,"1 0 0 - C H A N N E L   R E A D Y")
         p.end()
 
 class Login(Q.QDialog):
     def __init__(self,store,parent=None):
-        super().__init__(parent);self.store=store;self.session=None;self.setWindowTitle("INDUSTRIAL / ANALYZER — Secure Engineering Workspace");self.resize(1080,570)
-        layout=row();self.setLayout(layout)
-        art,al=frame("hero",42);layout.addWidget(art,5);al.addWidget(label("⌁   INDUSTRIAL / ANALYZER","section"));al.addStretch();al.addWidget(label("SECURE ENGINEERING WORKSPACE","micro"));al.addWidget(label("Intelligence\nbehind every","heroTitle"));al.addWidget(label("signal.","heroAccent"));al.addWidget(label("Explore trends, investigate anomalies and turn recorded machine data into engineering decisions.","sub"));al.addStretch();al.addWidget(label("OFFLINE ANALYSIS · ROLE-AWARE WORKSPACE · V12","micro"))
-        w,l=frame("card",36);layout.addWidget(w,4);l.addStretch();self.first=store.empty()
-        l.addWidget(label("FIRST-TIME SETUP" if self.first else "ACCESS CONTROL","micro"));l.addWidget(label("Create administrator" if self.first else "Welcome back","heading"));l.addWidget(label("Create a local administrator to open real datasets." if self.first else "Sign in to continue to your analysis workspace.","sub"))
+        super().__init__(parent);self.store=store;self.session=None;self.setWindowTitle("INDUSTRIAL / ANALYZER — Secure Engineering Workspace");self.resize(1080,600);self.setMinimumSize(840,520)
+        layout=Q.QHBoxLayout();layout.setSpacing(16);self.setLayout(layout)
+        art,al=frame("hero",42);layout.addWidget(art,5);al.addWidget(label("INDUSTRIAL / ANALYZER","section"));al.addStretch();al.addWidget(label("SECURE ENGINEERING WORKSPACE","micro"));al.addWidget(label("Intelligence\nbehind every","heroTitle"));al.addWidget(label("signal.","heroAccent"));al.addWidget(label("Explore trends, investigate anomalies and turn recorded machine data into engineering decisions.","sub"));al.addStretch();al.addWidget(label("OFFLINE ANALYSIS · ROLE-AWARE WORKSPACE · V12","micro"))
+        w,l=frame("card",30);layout.addWidget(w,4);l.addStretch();self.first=store.empty()
+        theme_row=Q.QHBoxLayout();theme_row.addWidget(label("FIRST-TIME SETUP" if self.first else "ACCESS CONTROL","micro"),1);choice=combo(["Dark","Light"],0 if theme.MODE=="dark" else 1);choice.setMaximumWidth(110);theme_row.addWidget(choice);l.addLayout(theme_row)
+        def switch(text):
+            theme.apply(Q.QApplication.instance(),STYLE,text.lower());C.QSettings("Robokks","IndustrialAnalyzer").setValue("theme",text.lower())
+        choice.currentTextChanged.connect(switch);l.addWidget(label("Create administrator" if self.first else "Welcome back","heading"));l.addWidget(label("Create a local administrator to open real datasets." if self.first else "Sign in to continue to your analysis workspace.","sub"))
         self.user=Q.QLineEdit();self.user.setMaxLength(40);self.user.setPlaceholderText("Enter username");self.pw=password();self.pw.setPlaceholderText("Enter password")
         l.addWidget(label("Username","sub"));l.addWidget(self.user);l.addWidget(label("Password","sub"));l.addWidget(self.pw);self.confirm=password()
         if self.first:l.addWidget(label("Confirm password","sub"));l.addWidget(self.confirm)
         self.error=label("","status");self.error.hide();l.addWidget(self.error)
-        l.addWidget(btn("Explore Analyzer — Demo Access (No Account)",self.demo));submit=btn("Create administrator →" if self.first else "Sign in →",self.submit,"primary");submit.setDefault(True);l.addWidget(submit)
+        l.addWidget(btn("Explore demo (no account)",self.demo));submit=btn("Create administrator →" if self.first else "Sign in →",self.submit,"primary");submit.setDefault(True);l.addWidget(submit)
         l.addWidget(label("Demo access uses synthetic data only. Local accounts are protected by password hashing and OS file permissions; this is not a tamper-proof security boundary.","sub"));l.addStretch()
     def demo(self):
         self.session=Session("Demo Engineer","Administrator",True);self.accept()
@@ -181,22 +187,54 @@ class Desktop(LegacyApp):
     def __init__(self,store,session):
         Q.QMainWindow.__init__(self)
         self.store=store;self.session=session;self.data=reference_demo();self.source="Telegram_Demo_100_Parameters";self.selected=set(range(4));self.colors={};self.page=0;self.pages={};self.dirty=set(range(9));self._data_identity=id(self.data);self._stats={};self.last_activity=time.monotonic();self.recordings=[];self.file_channel_count=0;self._active_job=None
-        self.setWindowTitle("INDUSTRIAL / ANALYZER — V12.2 Desktop");self.resize(1440,900);self.setMinimumSize(1000,650)
+        self.setWindowTitle("INDUSTRIAL / ANALYZER — V12.2 Desktop");self.resize(1440,900);self.setMinimumSize(1024,640)
         root=Q.QWidget();root.setObjectName("workspace");self.setCentralWidget(root);outer=Q.QHBoxLayout(root);outer.setContentsMargins(0,0,0,0);outer.setSpacing(0)
         side=Q.QFrame();side.setObjectName("sidebar");side.setFixedWidth(236);sl=Q.QVBoxLayout(side);sl.setContentsMargins(13,22,13,20);sl.setSpacing(5);outer.addWidget(side)
-        brand=row();logo=label("⌁","heading");logo.setFixedSize(38,38);logo.setAlignment(C.Qt.AlignmentFlag.AlignCenter);logo.setStyleSheet("background:#278fb3;border-radius:10px;color:white;");brand.addWidget(logo);bl=Q.QVBoxLayout();bl.setSpacing(2);bl.addWidget(label("INDUSTRIAL","section"));bl.addWidget(label("D A T A   A N A L Y Z E R","micro"));brand.addLayout(bl,1);sl.addLayout(brand)
+        brand=Q.QHBoxLayout();brand.setSpacing(10);logo=label("IA","section");logo.setFixedSize(38,38);logo.setAlignment(C.Qt.AlignmentFlag.AlignCenter);logo.setStyleSheet("background:#278fb3;border-radius:10px;color:white;");brand.addWidget(logo);bl=Q.QVBoxLayout();bl.setSpacing(2);bl.addWidget(label("INDUSTRIAL","section"));bl.addWidget(label("D A T A   A N A L Y Z E R","micro"));brand.addLayout(bl,1);sl.addLayout(brand)
         line=Q.QFrame();line.setFrameShape(Q.QFrame.Shape.HLine);line.setStyleSheet("color:#294156;");sl.addSpacing(14);sl.addWidget(line);sl.addSpacing(12)
         self.nav=[]
         for i,n in enumerate(PAGES):
-            b=btn(f"{ICONS[i]}   {n}",lambda checked=False,i=i:self.show_page(i),"nav");b.setCheckable(True);b.setMinimumHeight(44);sl.addWidget(b);self.nav.append(b)
-        sl.addSpacing(10);self.extra_btn=btn("◈   Extended tools",self.extended_tools,"nav");sl.addWidget(self.extra_btn);self.account_btn=btn("♙   Access & Users",self.account,"nav");sl.addWidget(self.account_btn);sl.addWidget(btn("♧   Lock / Sign out",self.lock,"nav"));sl.addStretch();sl.addWidget(label("OFFLINE WORKSPACE · V12.2\nMulti-recording workspace","sub"))
-        self.main=Q.QVBoxLayout();self.main.setContentsMargins(32,25,32,0);self.main.setSpacing(20);outer.addLayout(self.main,1)
-        top=row();title=Q.QVBoxLayout();title.setSpacing(5);title.addWidget(label("ANALYSIS CONTROL CENTER","micro"));self.title=label(TITLES[0],"heading");title.addWidget(self.title);top.addLayout(title,1)
-        self.userchip=label("","pill");self.badge=label("","pill");top.addWidget(self.userchip);top.addWidget(self.badge);self.open_btn=btn("＋ Open data file",self.open_file,"primary");top.addWidget(self.open_btn);top.addWidget(btn("Reset Demo",self.reset));self.main.addLayout(top)
+            b=btn(f"{i+1:02d}   {n}",lambda checked=False,i=i:self.show_page(i),"nav");b.setCheckable(True);b.setMinimumHeight(37);sl.addWidget(b);self.nav.append(b)
+        sl.addSpacing(10);self.extra_btn=btn("     Extended tools",self.extended_tools,"nav");sl.addWidget(self.extra_btn);self.account_btn=btn("     Access & Users",self.account,"nav");sl.addWidget(self.account_btn);sl.addWidget(btn("     Lock / Sign out",self.lock,"nav"));sl.addStretch();sl.addWidget(label("OFFLINE WORKSPACE · V12.2\nMulti-recording workspace","sub"))
+        self.main=Q.QVBoxLayout();self.main.setContentsMargins(24,18,24,0);self.main.setSpacing(14);outer.addLayout(self.main,1)
+        top=Q.QHBoxLayout();top.setSpacing(12);title=Q.QVBoxLayout();title.setSpacing(4);title.addWidget(label("ANALYSIS CONTROL CENTER","micro"));self.title=label(TITLES[0],"heading");title.addWidget(self.title);top.addLayout(title,1)
+        self.theme_selector=combo(["Dark","Light"],0 if theme.MODE=="dark" else 1);self.theme_selector.setAccessibleName("Color theme");self.theme_selector.setMaximumWidth(110);top.addWidget(self.theme_selector)
+        self.open_btn=btn("Open data file",self.open_file,"primary");top.addWidget(self.open_btn);top.addWidget(btn("Reset Demo",self.reset));self.main.addLayout(top)
+        status_row=Q.QHBoxLayout();status_row.setSpacing(8);self.userchip=label("","pill");self.badge=label("","pill");self.badge.setMaximumWidth(420);status_row.addWidget(self.userchip);status_row.addWidget(self.badge);status_row.addStretch(1);self.main.addLayout(status_row)
+        self.theme_selector.currentTextChanged.connect(self.change_theme)
         divider=Q.QFrame();divider.setFrameShape(Q.QFrame.Shape.HLine);divider.setStyleSheet("color:#294156");self.main.addWidget(divider)
-        self.scroll=Q.QScrollArea();self.scroll.setWidgetResizable(True);self.main.addWidget(self.scroll,1)
+        self.scroll=Q.QScrollArea();self.scroll.setWidgetResizable(True);self.scroll.setAlignment(C.Qt.AlignmentFlag.AlignTop);self.main.addWidget(self.scroll,1)
+        self.layout_timer=C.QTimer(self);self.layout_timer.setSingleShot(True);self.layout_timer.setInterval(40);self.layout_timer.timeout.connect(self.reflow_page)
         self.apply_role();self.show_page(0);Q.QApplication.instance().installEventFilter(self)
         self.idle= C.QTimer(self);self.idle.timeout.connect(self.check_idle);self.idle.start(30000)
+    def resizeEvent(self,event):
+        super().resizeEvent(event)
+        if hasattr(self,"layout_timer"):self.layout_timer.start()
+    def reflow_page(self):
+        if not hasattr(self,"scroll"):return
+        w=self.scroll.widget()
+        if w:
+            theme.reflow(w.layout(),max(300,self.scroll.viewport().width()-18))
+            w.layout().activate()
+    def change_theme(self,text):
+        app=Q.QApplication.instance();theme.apply(app,STYLE,text.lower());C.QSettings("Robokks","IndustrialAnalyzer").setValue("theme",text.lower())
+        pg.setConfigOptions(background=theme.colors()["plot"],foreground=theme.colors()["text"])
+        for page in self.pages.values():
+            for p in page.findChildren(pg.PlotWidget):
+                p.setBackground(theme.colors()["plot"])
+                for a in ("left","bottom","right","top"):
+                    p.getAxis(a).setPen(pg.mkPen(theme.colors()["grid"]));p.getAxis(a).setTextPen(pg.mkPen(theme.colors()["axis"]))
+                if p.plotItem.legend is not None:
+                    legend=p.plotItem.legend
+                    if hasattr(legend,"setLabelTextColor"):legend.setLabelTextColor(theme.colors()["text"])
+                for item in p.listDataItems():
+                    pen=item.opts.get("pen")
+                    if pen is not None:
+                        pen=pg.mkPen(pen);name=pen.color().name()
+                        dark=PALETTE;light=["#087d98","#ae6006","#5656c0","#14845b","#c43f62","#8752a6","#286ab1","#a7780b"]
+                        mapping=dict(zip(dark,light)) if theme.MODE=="light" else dict(zip(light,dark))
+                        if name in mapping:pen.setColor(G.QColor(mapping[name]));item.setPen(pen)
+        self.layout_timer.start()
     def eventFilter(self,obj,event):
         if event.type() in (C.QEvent.Type.MouseMove,C.QEvent.Type.KeyPress,C.QEvent.Type.MouseButtonPress):
             self.last_activity=time.monotonic()
@@ -206,10 +244,10 @@ class Desktop(LegacyApp):
             if self._active_job is not None:self._active_job.cancel.set()
             else:self.lock()
     def apply_role(self):
-        self.userchip.setText("● "+self.session.username+" · "+("Demo" if self.session.demo else self.session.role))
+        self.userchip.setText(self.session.username+" · "+("Demo" if self.session.demo else self.session.role))
         self.open_btn.setEnabled(self.session.allows("Open data files"))
         for i in (6,7):self.nav[i].setEnabled(self.session.allows("Advanced diagnostics"))
-        self.account_btn.setText("♙   Access & Users" if self.session.allows("Manage users") else "♙   My Account")
+        self.account_btn.setText("     Access & Users" if self.session.allows("Manage users") else "     My Account")
     def permitted(self,key):
         if not self.session.allows(key):return False
         if self.session.demo:return True
@@ -269,7 +307,7 @@ class Desktop(LegacyApp):
         self.session=dlg.session;self.last_activity=time.monotonic();self.apply_role();self.show_page(0);self.show();self.idle.start(30000)
     def show_page(self,i):
         if i in (6,7) and not self.permitted("Advanced diagnostics"):return
-        self.dataset_changed();self.page=i;self.title.setText(TITLES[i]);self.badge.setText(f"● {'SIMULATED DATA' if self.source=='Telegram_Demo_100_Parameters' else self.source} · {len(self.data)} CHANNELS")
+        self.dataset_changed();self.page=i;self.title.setText(TITLES[i]);self.badge.setText(f"{'SIMULATED DATA' if self.source=='Telegram_Demo_100_Parameters' else self.source} · {len(self.data)} CHANNELS")
         for j,b in enumerate(self.nav):b.setChecked(i==j)
         old=self.scroll.takeWidget()
         if old:old.setParent(None)
@@ -277,7 +315,7 @@ class Desktop(LegacyApp):
             if i in self.pages:self.pages[i].deleteLater()
             w=Q.QWidget();w.setObjectName("page");v=Q.QVBoxLayout(w);v.setContentsMargins(0,0,2,25);v.setSpacing(17)
             [self.overview,self.explorer,self.trends,self.statistics,self.thresholds,self.comparison,self.engineering,self.advanced,self.reports][i](v);v.addStretch();self.pages[i]=w;self.dirty.discard(i)
-        self.scroll.setWidget(self.pages[i]);self.scroll.verticalScrollBar().setValue(0);self.audit("Navigate",PAGES[i])
+        self.scroll.setWidget(self.pages[i]);self.reflow_page();self.layout_timer.start();self.scroll.verticalScrollBar().setValue(0);self.audit("Navigate",PAGES[i])
     def span(self):
         if not all(c.time_unit=="s" for c in self.data):return "Sample index"
         return f"{max((c.t[-1]-c.t[0] for c in self.data if len(c.t)),default=0):.3f} s"
@@ -285,7 +323,7 @@ class Desktop(LegacyApp):
         h,hl=frame("hero",36);h.setMinimumHeight(310);v.addWidget(h);r=row();hl.addLayout(r);left=Q.QVBoxLayout();left.setSpacing(10);r.addLayout(left,5);left.addWidget(label("ENGINEERING INTELLIGENCE / WORKSPACE 01","micro"));left.addWidget(label("From recorded signals","heroTitle"));left.addWidget(label("to clear decisions.","heroAccent"));left.addWidget(label("Explore the complete dataset, inspect operating behavior and move directly into the analysis that matters.","sub"));actions=row();left.addLayout(actions);actions.addWidget(btn("Explore signal trends ↗",lambda:self.show_page(2),"primary"));actions.addWidget(btn("View all statistics →",lambda:self.show_page(3)));actions.addStretch();r.addWidget(Orbit(),3)
         kpis(v,[("Channels discovered",len(self.data),"Available for analysis"),("Samples per channel",max(map(lambda c:len(c.y),self.data)),"Maximum imported observations"),("Recording span",self.span(),"Available time coverage"),("Active selection",len(self.selected),"Signals in trend workspace")])
         bottom=row();v.addLayout(bottom);w,l=frame();bottom.addWidget(w,3);l.addWidget(label("SIGNAL PREVIEW","micro"));rr=row();l.addLayout(rr);rr.addWidget(label("Recording at a glance","section"),1);rr.addWidget(btn("Full trend workspace ↗",lambda:self.show_page(2)));p=plot(310);l.addWidget(p);self.trend_plot(p,sorted(self.selected)[:4],100,0,preview=True)
-        w,l=frame();bottom.addWidget(w,2);l.addWidget(label("YOUR ANALYSIS TOOLS","micro"));l.addWidget(label("Choose an investigation","heading"));l.addWidget(label("Go straight from an observation to the right engineering tool.","sub"));g=Q.QGridLayout();l.addLayout(g)
+        w,l=frame();bottom.addWidget(w,2);l.addWidget(label("YOUR ANALYSIS TOOLS","micro"));l.addWidget(label("Choose an investigation","heading"));l.addWidget(label("Go straight from an observation to the right engineering tool.","sub"));g=theme.mark_grid(Q.QGridLayout(),2,180);l.addLayout(g)
         for k,(name,desc,i) in enumerate([("▤  Channel explorer","Browse all signals →",1),("▥  Statistical analysis","All-channel table →",3),("⚑  Limit investigation","Find excursions →",4),("⇄  Signal comparison","Compare behavior →",5)]):
             b=btn(name+"\n\n"+desc,lambda checked=False,i=i:self.show_page(i),"tool");b.setMinimumHeight(94);g.addWidget(b,k//2,k%2)
         w,l=frame();v.addWidget(w);l.addWidget(label("CURRENT ANALYSIS SESSION","micro"));card_title(l,"Dataset information");l.addWidget(label(f"DATASET NAME    {self.source}     ·     RECORDING SPAN    {self.span()}     ·     CHANNELS    {len(self.data)}","sub"))
@@ -454,7 +492,7 @@ class Desktop(LegacyApp):
         cursor(p1,read1,False);cursor(p2,read2,True);width.currentIndexChanged.connect(redraw);timer=C.QTimer(wb);timer.setSingleShot(True);timer.setInterval(85);timer.timeout.connect(redraw)
         pos.valueChanged.connect(lambda _:timer.start());mode.currentIndexChanged.connect(redraw);scale.currentIndexChanged.connect(redraw);dual.toggled.connect(redraw);redraw();trace_table()
     def tabs(self,parent,names,factory,columns=5):
-        bar=Q.QGridLayout();parent.addLayout(bar);bar.setSpacing(8);stack=Q.QStackedWidget();parent.addWidget(stack);buttons=[];pages=[]
+        bar=theme.mark_grid(Q.QGridLayout(),columns,175);parent.addLayout(bar);bar.setSpacing(8);stack=Q.QStackedWidget();parent.addWidget(stack);buttons=[];pages=[]
         def activate(i):
             stack.setCurrentIndex(i)
             for j,b in enumerate(buttons):b.setChecked(j==i)
@@ -718,7 +756,7 @@ class AnalysisPane(Q.QWidget):
             self.show_metrics({});fill(self.tbl,[],[]);self.status.setText("Analysis not completed: "+str(exc))
 
 def run():
-    app=Q.QApplication(sys.argv);app.setApplicationName("IndustrialAnalyzer");app.setOrganizationName("Robokks");app.setStyleSheet(STYLE)
+    app=Q.QApplication(sys.argv);app.setApplicationName("IndustrialAnalyzer");app.setOrganizationName("Robokks");theme.apply(app,STYLE,C.QSettings("Robokks","IndustrialAnalyzer").value("theme","dark") if C.QSettings("Robokks","IndustrialAnalyzer").value("theme","dark") in ("dark","light") else "dark")
     directory=C.QStandardPaths.writableLocation(C.QStandardPaths.StandardLocation.AppLocalDataLocation)
     store=AccessStore(Path(directory)/"accounts.sqlite3")
     try:

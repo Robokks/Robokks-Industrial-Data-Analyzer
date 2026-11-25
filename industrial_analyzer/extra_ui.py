@@ -12,6 +12,7 @@ import data_workspace as dw
 import engineering_tools as et
 import live_capture
 import recording_ops as ro
+import ui_theme as theme
 
 def ui():
     import v12_ui
@@ -225,10 +226,13 @@ class EngineeringDialog(Q.QDialog):
         super().__init__(app);self.app=app;self.setWindowTitle("Extended Engineering Workstation");self.resize(1220,850);self.result=None;self.rows=[];self.headers=[]
         l=Q.QVBoxLayout(self);l.addWidget(ui().label("ENGINEERING / EXTENDED TOOLKIT","micro"));l.addWidget(ui().label("Mechanical · Electrical · Vibration · Mathematics","heading"))
         self.tool=ui().combo(list(TOOLS));l.addWidget(self.tool)
-        self.control=Q.QWidget();self.form=Q.QGridLayout(self.control);l.addWidget(self.control)
-        r=Q.QHBoxLayout();l.addLayout(r);r.addWidget(ui().btn("Calculate",self.calculate,"primary"));r.addWidget(ui().btn("Add result as derived channel",self.add));r.addWidget(ui().btn("Export results",self.export));r.addWidget(ui().btn("Save graph PNG",self.png));r.addWidget(ui().btn("Close",self.accept))
+        self.control=Q.QWidget();self.form=Q.QGridLayout(self.control);self.form.setHorizontalSpacing(12);self.form.setVerticalSpacing(8);l.addWidget(self.control)
+        r=theme.AdaptiveRow();l.addLayout(r);r.addWidget(ui().btn("Calculate",self.calculate,"primary"));r.addWidget(ui().btn("Add result as derived channel",self.add));r.addWidget(ui().btn("Export results",self.export));r.addWidget(ui().btn("Save graph PNG",self.png));r.addWidget(ui().btn("Close",self.accept))
         self.status=ui().label("Select a tool. Input values must use the units shown in the channel selectors.","status");l.addWidget(self.status)
         self.plot=ui().plot(330);l.addWidget(self.plot,1);self.table=ui().table([],[]);self.table.setMinimumHeight(200);l.addWidget(self.table,1);self.tool.currentIndexChanged.connect(self.rebuild);self.rebuild()
+    def resizeEvent(self,event):
+        super().resizeEvent(event)
+        if self.layout():theme.reflow(self.layout(),self.width()-36)
     def rebuild(self,*_):
         while self.form.count():
             it=self.form.takeAt(0)
@@ -319,7 +323,7 @@ class EngineeringDialog(Q.QDialog):
 def graph_studio(app):
     d=Q.QDialog(app);d.setWindowTitle("Independent-axis Graph Studio");d.resize(1180,790);l=Q.QVBoxLayout(d)
     l.addWidget(ui().label("Independent Y axes · synchronized X when compatible","heading"))
-    r=Q.QHBoxLayout();l.addLayout(r);a=ui().field(r,"LEFT AXIS",ui().combo(app.names()));b=ui().field(r,"RIGHT AXIS",ui().combo(app.names(),1));r.addWidget(ui().btn("Draw",lambda:render(),"primary"))
+    r=theme.AdaptiveRow();l.addLayout(r);a=ui().field(r,"LEFT AXIS",ui().combo(app.names()));b=ui().field(r,"RIGHT AXIS",ui().combo(app.names(),1));r.addWidget(ui().btn("Draw",lambda:render(),"primary"))
     p=ui().plot(420);l.addWidget(p,1);right=pg.ViewBox();pi=p.getPlotItem();pi.showAxis("right");pi.scene().addItem(right);pi.getAxis("right").linkToView(right);right.setXLink(pi.vb)
     def resize():
         right.setGeometry(pi.vb.sceneBoundingRect());right.linkedViewChanged(pi.vb,right.XAxis)
@@ -378,8 +382,8 @@ def recording_editor(app):
     d=Q.QDialog(app);d.setWindowTitle("Recording alignment / merge / split");d.resize(1000,570);l=Q.QVBoxLayout(d)
     l.addWidget(ui().label("Recording operations","heading"))
     l.addWidget(ui().label("Create new channels only. For alignment, explicitly confirm the offset (added to B time). No automatic synchronization or anti-alias downsampling.","status"))
-    r=Q.QHBoxLayout();l.addLayout(r);a=ui().field(r,"CHANNEL A",ui().combo(app.names()));b=ui().field(r,"CHANNEL B",ui().combo(app.names(),1))
-    rr=Q.QHBoxLayout();l.addLayout(rr);offset=ui().field(rr,"B CLOCK OFFSET (seconds)",ui().number(0));index=ui().field(rr,"SPLIT A AT SAMPLE INDEX",ui().number(1,1,dw.MAX_SAMPLES,1,True))
+    r=theme.AdaptiveRow();l.addLayout(r);a=ui().field(r,"CHANNEL A",ui().combo(app.names()));b=ui().field(r,"CHANNEL B",ui().combo(app.names(),1))
+    rr=theme.AdaptiveRow();l.addLayout(rr);offset=ui().field(rr,"B CLOCK OFFSET (seconds)",ui().number(0));index=ui().field(rr,"SPLIT A AT SAMPLE INDEX",ui().number(1,1,dw.MAX_SAMPLES,1,True))
     status=ui().label("","status");l.addWidget(status)
     def apply(kind):
         try:
@@ -407,8 +411,8 @@ def recording_editor(app):
 def operating_map(app):
     if not app.permitted("Modify analysis settings"):return
     d=Q.QDialog(app);d.setWindowTitle("Efficiency operating map");d.resize(1200,820);l=Q.QVBoxLayout(d);l.addWidget(ui().label("Speed × Torque · power-weighted efficiency","heading"))
-    rr=Q.QHBoxLayout();l.addLayout(rr);selectors=[ui().field(rr,n,ui().combo(app.names(),i)) for i,n in enumerate(("Speed rpm","Torque Nm","Input kW","Output kW"))]
-    rr=Q.QHBoxLayout();l.addLayout(rr);bins=ui().field(rr,"Bins per axis",ui().number(16,2,64,1,True));minimum=ui().field(rr,"Minimum input kW",ui().number(.01,.0001,1e9,.01));count=ui().field(rr,"Minimum samples per bin",ui().number(3,1,100000,1,True))
+    rr=theme.AdaptiveRow();l.addLayout(rr);selectors=[ui().field(rr,n,ui().combo(app.names(),i)) for i,n in enumerate(("Speed rpm","Torque Nm","Input kW","Output kW"))]
+    rr=theme.AdaptiveRow();l.addLayout(rr);bins=ui().field(rr,"Bins per axis",ui().number(16,2,64,1,True));minimum=ui().field(rr,"Minimum input kW",ui().number(.01,.0001,1e9,.01));count=ui().field(rr,"Minimum samples per bin",ui().number(3,1,100000,1,True))
     p=ui().plot(460);l.addWidget(p,1);p.setLabel("left","Torque",units="Nm");p.setLabel("bottom","Speed",units="rpm")
     status=ui().label("Select calibrated inputs. Positive motoring flow only; each occupied cell is 100 × sum(output kW) / sum(input kW). Values above 100% are not clipped.","status");l.addWidget(status);last=[]
     def run():

@@ -25,7 +25,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 35
     env:
-      QT_QPA_PLATFORM: offscreen
+      QT_QPA_PLATFORM: windows
     steps:
       - name: Require exact reviewed revision before packaging
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.package }}
@@ -71,9 +71,11 @@ jobs:
         shell: pwsh
         run: |
           Set-Location $env:PROJECT
+          New-Item -ItemType Directory -Force ui_review_scaled/100 | Out-Null
+          Copy-Item ui_review/*.png ui_review_scaled/100
           foreach ($scale in @("1.25","1.5")) {
             $env:QT_SCALE_FACTOR=$scale
-            python -m pytest -q tests/test_v12_ui.py::test_native_reference_screens --junitxml="scale-$scale.xml"
+            python -m pytest -q tests/test_responsive_ui.py --junitxml="scale-$scale.xml"
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
             $dest="ui_review_scaled/$scale"
             New-Item -ItemType Directory -Force $dest | Out-Null
@@ -101,7 +103,7 @@ jobs:
         shell: pwsh
         run: |
           Set-Location $env:PROJECT
-          python -m bandit main.py engine.py safe_export.py v12_ui.py access.py performance.py engineering_tools.py data_workspace.py live_capture.py extra_ui.py recording_ops.py
+          python -m bandit main.py engine.py safe_export.py v12_ui.py access.py performance.py engineering_tools.py data_workspace.py live_capture.py extra_ui.py recording_ops.py ui_theme.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pip_audit
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
