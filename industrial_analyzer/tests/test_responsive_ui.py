@@ -29,7 +29,11 @@ def test_native_theme_and_responsive_layout(tmp_path):
                 for i in range(9):
                     win.show_page(i);win.reflow_page();QTest.qWait(80);app.processEvents()
                     page=win.pages[i]
-                    assert win.scroll.horizontalScrollBar().maximum()<=2,(mode,width,i,win.scroll.horizontalScrollBar().maximum())
+                    overflow=win.scroll.horizontalScrollBar().maximum()
+                    if overflow>2:
+                        win.grab().save(str(output/f"FAIL-overflow-{mode.lower()}-{width}-{i+1:02d}.png"))
+                        hints=[(w.objectName(),type(w).__name__,w.minimumSizeHint().width(),w.width()) for w in page.findChildren(Q.QWidget) if w.isVisibleTo(page) and w.minimumSizeHint().width()>win.scroll.viewport().width()]
+                        pytest.fail(f"Horizontal overflow {overflow}: {mode} {width} page {i+1}, viewport={win.scroll.viewport().width()}, page minimum={page.minimumSizeHint().width()}, widgets={hints[:20]}")
                     for b in page.findChildren(Q.QPushButton):
                         if b.isVisibleTo(page):
                             assert b.height()>=30,(mode,width,i,b.text(),b.height())
@@ -38,6 +42,13 @@ def test_native_theme_and_responsive_layout(tmp_path):
                             assert p.height()>=250 and p.width()>=240,(mode,width,i,p.size())
                     pm=win.grab();assert not pm.isNull()
                     assert pm.save(str(output/f"responsive-{mode.lower()}-{width}-{i+1:02d}.png"))
+                    if i in (6,7):
+                        stack=page.findChild(Q.QStackedWidget)
+                        for j in range(stack.count()):
+                            tabs=[b for b in page.findChildren(Q.QPushButton) if b.objectName()=="tab"]
+                            tabs[j].click();win.reflow_page();QTest.qWait(50);app.processEvents()
+                            assert win.scroll.horizontalScrollBar().maximum()<=2,(mode,width,i,j,win.scroll.horizontalScrollBar().maximum())
+                        tabs[0].click();win.reflow_page()
             d=Login(store);d.show();app.processEvents();assert d.grab().save(str(output/f"responsive-{mode.lower()}-login.png"));d.close()
         assert win.theme_selector.currentText()=="Light"
     finally:

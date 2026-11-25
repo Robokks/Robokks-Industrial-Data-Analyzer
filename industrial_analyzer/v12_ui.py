@@ -214,8 +214,8 @@ class Desktop(LegacyApp):
         if not hasattr(self,"scroll"):return
         w=self.scroll.widget()
         if w:
-            theme.reflow(w.layout(),max(300,self.scroll.viewport().width()-18))
-            w.layout().activate()
+            theme.reflow(w.layout(),max(300,self.scroll.viewport().width()-24))
+            w.layout().invalidate();w.layout().activate();w.updateGeometry()
     def change_theme(self,text):
         app=Q.QApplication.instance();theme.apply(app,STYLE,text.lower());C.QSettings("Robokks","IndustrialAnalyzer").setValue("theme",text.lower())
         pg.setConfigOptions(background=theme.colors()["plot"],foreground=theme.colors()["text"])
@@ -492,13 +492,14 @@ class Desktop(LegacyApp):
         cursor(p1,read1,False);cursor(p2,read2,True);width.currentIndexChanged.connect(redraw);timer=C.QTimer(wb);timer.setSingleShot(True);timer.setInterval(85);timer.timeout.connect(redraw)
         pos.valueChanged.connect(lambda _:timer.start());mode.currentIndexChanged.connect(redraw);scale.currentIndexChanged.connect(redraw);dual.toggled.connect(redraw);redraw();trace_table()
     def tabs(self,parent,names,factory,columns=5):
-        bar=theme.mark_grid(Q.QGridLayout(),columns,175);parent.addLayout(bar);bar.setSpacing(8);stack=Q.QStackedWidget();parent.addWidget(stack);buttons=[];pages=[]
+        bar=theme.mark_grid(Q.QGridLayout(),columns,175);parent.addLayout(bar);bar.setSpacing(8);stack=theme.ResponsiveStack();parent.addWidget(stack);buttons=[];pages=[]
         def activate(i):
             stack.setCurrentIndex(i)
             for j,b in enumerate(buttons):b.setChecked(j==i)
             # QStackedWidget normally sizes to its largest child; size to selected pane.
-            for j,w in enumerate(pages):w.setSizePolicy(Q.QSizePolicy.Policy.Preferred,Q.QSizePolicy.Policy.Preferred if j==i else Q.QSizePolicy.Policy.Ignored)
-            stack.updateGeometry()
+            for j,w in enumerate(pages):w.setSizePolicy(Q.QSizePolicy.Policy.Preferred if j==i else Q.QSizePolicy.Policy.Ignored,Q.QSizePolicy.Policy.Preferred if j==i else Q.QSizePolicy.Policy.Ignored)
+            theme.reflow(pages[i].layout(),max(300,self.scroll.viewport().width()-32));stack.updateGeometry()
+            self.layout_timer.start()
         for i,n in enumerate(names):
             b=btn(n,lambda checked=False,i=i:activate(i),"tab");b.setCheckable(True);bar.addWidget(b,i//columns,i%columns);buttons.append(b);w=factory(n);pages.append(w);stack.addWidget(w)
         activate(0);return stack
@@ -670,19 +671,22 @@ RUN_NAMES={"Distribution":"Calculate distribution","Process Capability":"Analyze
 class AnalysisPane(Q.QWidget):
     def __init__(self,app,tool):
         super().__init__();self.app=app;self.tool=tool;self.rows=[];self.headers=[];self.params=[];v=Q.QVBoxLayout(self);v.setContentsMargins(0,4,0,0);v.setSpacing(15)
-        w,l=frame("toolbar");v.addWidget(w);bar=row();l.addLayout(bar);self.a=field(bar,"X / REFERENCE CHANNEL" if tool=="Relationships" else "ANALYSIS CHANNEL",combo(app.names()));self.b=combo(app.names(),1)
-        if tool in ("Relationships","Lag & Correlation"):field(bar,"Y / RESPONSE CHANNEL",self.b)
+        w,l=frame("toolbar");v.addWidget(w);bar=theme.mark_grid(Q.QGridLayout(),4,185);bar.setSpacing(12);l.addLayout(bar)
+        def control(title,widget):
+            box=Q.QWidget();col=Q.QVBoxLayout(box);col.setContentsMargins(0,0,0,0);col.setSpacing(6);col.addWidget(label(title,"micro"));col.addWidget(widget);i=bar.count();bar.addWidget(box,i//4,i%4);return widget
+        self.a=control("X / REFERENCE CHANNEL" if tool=="Relationships" else "ANALYSIS CHANNEL",combo(app.names()));self.b=combo(app.names(),1)
+        if tool in ("Relationships","Lag & Correlation"):control("Y / RESPONSE CHANNEL",self.b)
         for i,(n,d) in enumerate(PARAM.get(tool,[])):
             if tool=="Frequency Spectrum":
                 x=combo(["256 samples","512 samples","1024 samples","2048 samples"],1) if i==0 else combo(["Hann (recommended)","Rectangular"])
             elif tool=="Signal Conditioning" and i==1:x=combo(["Original + smoothed","Rate of change (per second)"])
             else:x=number(d)
-            self.params.append(field(bar,n.upper(),x))
-        if tool=="Distribution":self.params.append(field(bar,"IQR OUTLIER FACTOR",number(1.5,.5,5,.5)))
-        if tool=="Relationships":self.params.append(field(bar,"RESPONSE LAG (SAMPLES)",number(0,-100,100,1,True)))
+            self.params.append(control(n.upper(),x))
+        if tool=="Distribution":self.params.append(control("IQR OUTLIER FACTOR",number(1.5,.5,5,.5)))
+        if tool=="Relationships":self.params.append(control("RESPONSE LAG (SAMPLES)",number(0,-100,100,1,True)))
         for p in self.params:p.setEnabled(app.session.allows("Modify analysis settings"))
-        bar.addWidget(btn(RUN_NAMES.get(tool,"Run diagnostics"),self.run,"primary"));bar.addWidget(btn("↓ Export results CSV",lambda:app.do_export(self.headers,self.rows)))
-        self.status=label("Choose a channel to begin the investigation.","status");v.addWidget(self.status);self.metrics=Q.QWidget();self.ml=Q.QGridLayout(self.metrics);self.ml.setContentsMargins(0,0,0,0);v.addWidget(self.metrics)
+        actions=row();l.addLayout(actions);actions.addWidget(btn(RUN_NAMES.get(tool,"Run diagnostics"),self.run,"primary"));actions.addWidget(btn("Export results CSV",lambda:app.do_export(self.headers,self.rows)));actions.addStretch(1)
+        self.status=label("Choose a channel to begin the investigation.","status");v.addWidget(self.status);self.metrics=Q.QWidget();self.ml=theme.mark_grid(Q.QGridLayout(self.metrics),4,175);self.ml.setContentsMargins(0,0,0,0);v.addWidget(self.metrics)
         r=row();v.addLayout(r);self.plots=[]
         for title in CHART_TITLES[tool]:
             _,p=chart(r,title,330 if len(CHART_TITLES[tool])>1 else 410);self.plots.append(p)
@@ -693,7 +697,8 @@ class AnalysisPane(Q.QWidget):
             if item.widget():item.widget().deleteLater()
         for i,(k,x) in enumerate(m.items()):
             w,_=metric(k,fmt(x));self.ml.addWidget(w,i//4,i%4)
-        for i in range(4):self.ml.setColumnStretch(i,1)
+        self.ml.current_columns=None
+        theme.reflow(self.ml,max(300,self.app.scroll.viewport().width()-32));self.app.layout_timer.start()
     def run(self):
         a=self.app.data[self.a.currentIndex()];b=self.app.data[self.b.currentIndex()];tool=self.tool;self.rows=[];self.headers=[]
         try:

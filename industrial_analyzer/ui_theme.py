@@ -85,6 +85,15 @@ def apply(app,base,mode):
         pal.setColor(role,G.QColor(c[key]))
     app.setPalette(pal)
 
+class ResponsiveStack(Q.QStackedWidget):
+    """Hidden workbenches must not impose their minimum width on the visible page."""
+    def minimumSizeHint(self):
+        w=self.currentWidget()
+        return w.minimumSizeHint() if w is not None else C.QSize(0,0)
+    def sizeHint(self):
+        w=self.currentWidget()
+        return w.sizeHint() if w is not None else C.QSize(0,0)
+
 class AdaptiveRow(Q.QBoxLayout):
     """Reflows entire controls/cards instead of shrinking text or clipping them."""
     def __init__(self):
@@ -110,6 +119,11 @@ def reflow(layout,width):
     if layout is None or width<=0:return
     margins=layout.contentsMargins()
     available=max(120,width-margins.left()-margins.right())
+    if isinstance(layout,Q.QStackedLayout):
+        for i in range(layout.count()):
+            w=layout.widget(i)
+            if w is not None:reflow(w.layout(),available)
+        layout.invalidate();return
     if isinstance(layout,Q.QGridLayout) and hasattr(layout,"adaptive_columns"):
         items=[]
         for i in range(layout.count()):
@@ -119,10 +133,12 @@ def reflow(layout,width):
         n=max(1,min(layout.adaptive_columns,(available+layout.spacing())//(minimum+layout.spacing())))
         if getattr(layout,"current_columns",None)!=n:
             for w in items:layout.removeWidget(w)
-            for j in range(layout.adaptive_columns):layout.setColumnStretch(j,0)
+            for j in range(max(layout.columnCount(),layout.adaptive_columns)):
+                layout.setColumnStretch(j,0);layout.setColumnMinimumWidth(j,0)
             for j,w in enumerate(items):layout.addWidget(w,j//n,j%n)
             for j in range(n):layout.setColumnStretch(j,1)
             layout.current_columns=n
+            layout.invalidate()
         child_width=max(120,(available-(n-1)*layout.spacing())//n)
     elif isinstance(layout,AdaptiveRow):
         # First allow children to compact before calculating horizontal requirements.
@@ -139,3 +155,5 @@ def reflow(layout,width):
         if item.layout():reflow(item.layout(),child_width)
         elif w is not None and w.layout() and not isinstance(w,(Q.QAbstractItemView,Q.QComboBox,Q.QAbstractSpinBox,Q.QGraphicsView,Q.QAbstractScrollArea)):
             reflow(w.layout(),child_width)
+            w.updateGeometry()
+    layout.invalidate()
