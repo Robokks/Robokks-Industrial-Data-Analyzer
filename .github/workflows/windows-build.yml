@@ -1,0 +1,82 @@
+name: Windows analyzer build
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '**.py'
+      - '**.toml'
+      - '**.rs'
+      - '**/requirements.txt'
+      - '**/build_windows.bat'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Locate project
+        shell: pwsh
+        run: |
+          if (Test-Path industrial_analyzer/main.py) { "PROJECT=industrial_analyzer" >> $env:GITHUB_ENV }
+          elseif (Test-Path main.py) { "PROJECT=." >> $env:GITHUB_ENV }
+          else { throw "Analyzer source is missing" }
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          Set-Location $env:PROJECT
+          python -m pip install -r requirements.txt pytest pyinstaller bandit pip-audit maturin
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build Rust extension
+        shell: pwsh
+        run: |
+          Set-Location "$env:PROJECT/rust_engine"
+          maturin build --release --out wheels
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $wheel = Get-ChildItem wheels/*.whl | Select-Object -First 1
+          python -m pip install $wheel.FullName
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Tests
+        shell: pwsh
+        run: |
+          Set-Location $env:PROJECT
+          python -m pytest -q -rs --junitxml=tests.xml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          [xml]$report = Get-Content tests.xml
+          if (@($report.testsuites.testsuite | Where-Object { [int]$_.skipped -gt 0 }).Count) { throw "Skipped tests block packaging" }
+      - name: Security gates
+        shell: pwsh
+        run: |
+          Set-Location $env:PROJECT
+          python -m bandit main.py engine.py safe_export.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pip_audit
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo install cargo-audit --locked
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Set-Location rust_engine
+          cargo audit
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Package
+        shell: pwsh
+        run: |
+          Set-Location $env:PROJECT
+          python -m PyInstaller --noconfirm --clean --windowed --name IndustrialAnalyzer --collect-all pyqtgraph --collect-all nptdms --hidden-import analyzer_native main.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $exe = Resolve-Path dist/IndustrialAnalyzer/IndustrialAnalyzer.exe
+          $p = Start-Process $exe -PassThru
+          Start-Sleep -Seconds 15
+          $p.Refresh()
+          if ($p.HasExited) { throw "Packaged application exited during startup: $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IndustrialAnalyzer-Windows-x64
+          path: ${{ env.PROJECT }}/dist/IndustrialAnalyzer/
+          if-no-files-found: error
