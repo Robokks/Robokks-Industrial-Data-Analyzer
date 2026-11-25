@@ -10,6 +10,7 @@ import pyqtgraph as pg
 from main import App as LegacyApp, PAGES, LAB, ADV, PARAM, fmt, label, button, table, fill, export
 from engine import Channel, describe, analyze, paired, events
 from access import AccessStore, Session, ROLES, MATRIX
+from performance import preview_indices, nearest_index, cursor_measurement
 
 TITLES = ["Analysis Overview","Data Explorer","Signal Trend Workspace","Statistical Analysis","Threshold Analysis","Signal Comparison","Engineering Analysis Lab","Advanced Signal Diagnostics","Reports & Export"]
 ICONS = ["▦","▤","⌁","▥","⚑","⇄","◈","✧","▣"]
@@ -112,7 +113,7 @@ def draw(p,curves,colors=None):
             p.addItem(pg.BarGraphItem(x=x,height=y,width=.9*abs(x[1]-x[0]),brush=col,pen=None))
         else:
             scatter=n in ("Flags","XY","Outliers","Residuals","Violations")
-            p.plot(x,y,name=n,pen=None if scatter else pg.mkPen(col,width=1.8),symbol="o" if scatter else None,symbolBrush=col,symbolPen=None,symbolSize=5,connect="finite",autoDownsample=True)
+            p.plot(x,y,name=n,pen=None if scatter else pg.mkPen(col,width=1.8),symbol="o" if scatter else None,symbolBrush=col,symbolPen=None,symbolSize=5,connect="finite",autoDownsample=True,downsampleMethod="peak")
     p.enableAutoRange()
 
 def chart(parent,title,height=310,subtitle=None):
@@ -262,13 +263,13 @@ class Desktop(LegacyApp):
     def overview(self,v):
         h,hl=frame("hero",36);h.setMinimumHeight(310);v.addWidget(h);r=row();hl.addLayout(r);left=Q.QVBoxLayout();left.setSpacing(10);r.addLayout(left,5);left.addWidget(label("ENGINEERING INTELLIGENCE / WORKSPACE 01","micro"));left.addWidget(label("From recorded signals","heroTitle"));left.addWidget(label("to clear decisions.","heroAccent"));left.addWidget(label("Explore the complete dataset, inspect operating behavior and move directly into the analysis that matters.","sub"));actions=row();left.addLayout(actions);actions.addWidget(btn("Explore signal trends ↗",lambda:self.show_page(2),"primary"));actions.addWidget(btn("View all statistics →",lambda:self.show_page(3)));actions.addStretch();r.addWidget(Orbit(),3)
         kpis(v,[("Channels discovered",len(self.data),"Available for analysis"),("Samples per channel",max(map(lambda c:len(c.y),self.data)),"Maximum imported observations"),("Recording span",self.span(),"Available time coverage"),("Active selection",len(self.selected),"Signals in trend workspace")])
-        bottom=row();v.addLayout(bottom);w,l=frame();bottom.addWidget(w,3);l.addWidget(label("SIGNAL PREVIEW","micro"));rr=row();l.addLayout(rr);rr.addWidget(label("Recording at a glance","section"),1);rr.addWidget(btn("Full trend workspace ↗",lambda:self.show_page(2)));p=plot(310);l.addWidget(p);self.trend_plot(p,sorted(self.selected)[:4],100,0)
+        bottom=row();v.addLayout(bottom);w,l=frame();bottom.addWidget(w,3);l.addWidget(label("SIGNAL PREVIEW","micro"));rr=row();l.addLayout(rr);rr.addWidget(label("Recording at a glance","section"),1);rr.addWidget(btn("Full trend workspace ↗",lambda:self.show_page(2)));p=plot(310);l.addWidget(p);self.trend_plot(p,sorted(self.selected)[:4],100,0,preview=True)
         w,l=frame();bottom.addWidget(w,2);l.addWidget(label("YOUR ANALYSIS TOOLS","micro"));l.addWidget(label("Choose an investigation","heading"));l.addWidget(label("Go straight from an observation to the right engineering tool.","sub"));g=Q.QGridLayout();l.addLayout(g)
         for k,(name,desc,i) in enumerate([("▤  Channel explorer","Browse all signals →",1),("▥  Statistical analysis","All-channel table →",3),("⚑  Limit investigation","Find excursions →",4),("⇄  Signal comparison","Compare behavior →",5)]):
             b=btn(name+"\n\n"+desc,lambda checked=False,i=i:self.show_page(i),"tool");b.setMinimumHeight(94);g.addWidget(b,k//2,k%2)
         w,l=frame();v.addWidget(w);l.addWidget(label("CURRENT ANALYSIS SESSION","micro"));card_title(l,"Dataset information");l.addWidget(label(f"DATASET NAME    {self.source}     ·     RECORDING SPAN    {self.span()}     ·     CHANNELS    {len(self.data)}","sub"))
     def explorer(self,v):
-        top=row();v.addLayout(top);top.addWidget(label("Channel Library","section"),1);search=Q.QLineEdit();search.setPlaceholderText("Search name or index…");top.addWidget(search);select=btn("Select filtered",lambda:bulk(True));clear=btn("Clear selection",lambda:bulk(False));top.addWidget(select);top.addWidget(clear)
+        top=row();v.addLayout(top);top.addWidget(label("Channel Library","section"),1);search=Q.QLineEdit();search.setPlaceholderText("Search name or index…");top.addWidget(search);select=btn("Select filtered",lambda:bulk(True));clear=btn("Clear selection",lambda:bulk(False));top.addWidget(select);top.addWidget(clear);top.addWidget(btn("Channel properties",lambda:properties()))
         nums=kpis(v,[("All channels",len(self.data)),("Selected",len(self.selected)),("Numeric",len(self.data)),("Current source","Demo" if self.source.startswith("Telegram_Demo") else "Imported")])
         w,l=frame();v.addWidget(w);t=table([],[]);t.setMinimumHeight(500);t.verticalHeader().hide();l.addWidget(t);shown=[]
         def refresh(*_):
@@ -291,6 +292,14 @@ class Desktop(LegacyApp):
             if on:self.selected.update(shown)
             else:self.selected.clear()
             nums[1].setText(str(len(self.selected)));self.selection_changed();refresh()
+        def properties():
+            r=t.currentRow()
+            if r<0 or r>=len(shown):return
+            c=self.data[shown[r]];dlg=Q.QDialog(self);dlg.setWindowTitle("Channel properties");dlg.resize(740,480);layout=Q.QVBoxLayout(dlg)
+            layout.addWidget(label(c.name,"heading"))
+            values=[("Unit",c.unit or "Unspecified"),("Samples",len(c.y)),("Time unit",c.time_unit),("Time source",c.metadata.get("time_source","Imported or generated")),("Clock origin",c.metadata.get("clock_id","Unspecified"))]
+            values.extend(c.metadata.get("properties",{}).items())
+            table_card(layout,"Channel metadata",["Property","Value"],values,300);layout.addWidget(btn("Close",dlg.accept));dlg.exec()
         t.itemChanged.connect(changed);search.textChanged.connect(refresh);refresh()
     def channel_browser(self):
         dlg=Q.QDialog(self);dlg.setWindowTitle("Choose channels to visualize");dlg.resize(1050,760);l=Q.QVBoxLayout(dlg);l.setContentsMargins(25,25,25,25);l.setSpacing(14)
@@ -311,16 +320,26 @@ class Desktop(LegacyApp):
         def bulk(on):
             self.selected=set(range(min(12,len(self.data)))) if on else set();self.selection_changed();refresh()
         search.textChanged.connect(refresh);refresh();l.addWidget(label("The first six selected channels appear above and the next six below. Additional selected signals remain available for export.","sub"));l.addWidget(btn("✓ Return to signal trends",dlg.accept,"primary"));dlg.exec()
-    def trend_data(self,ids,pct,pos):
+    def trend_data(self,ids,pct,pos,raw=False,preview=False):
         curves=[];cols=[];mixed=len({self.data[i].time_unit for i in ids})>1
+        selected_colors={i:j for j,i in enumerate(sorted(self.selected))}
         for i in ids:
-            c=self.data[i];n=max(1,round(len(c.y)*pct/100));start=round(max(0,len(c.y)-n)*pos/100);y=c.y[start:start+n];x=np.arange(start,start+len(y)) if mixed else c.t[start:start+n];good=y[np.isfinite(y)]
-            if not len(good):z=np.full(len(y),np.nan)
-            else:z=(y-good.min())*100/(np.ptp(good) or 1)
-            curves.append((x,z,c.name));cols.append(self.colors.get(i,PALETTE[sorted(self.selected).index(i)%len(PALETTE)]))
+            c=self.data[i];n=max(1,round(len(c.y)*pct/100));start=round(max(0,len(c.y)-n)*pos/100);y=c.y[start:start+n];x=np.arange(start,start+len(y)) if mixed else c.t[start:start+n]
+            if raw:z=y
+            else:
+                good=y[np.isfinite(y)]
+                if not len(good):z=np.full(len(y),np.nan)
+                else:z=(y-good.min())*100/(np.ptp(good) or 1)
+            if preview:
+                ix=preview_indices(z);x=x[ix];z=z[ix]
+            curves.append((x,z,c.name+(f' ({c.unit})' if raw and c.unit else '')));cols.append(self.colors.get(i,PALETTE[selected_colors[i]%len(PALETTE)]))
         return curves,cols,("Sample index (mixed time bases)" if mixed else ("Time (s)" if ids and self.data[ids[0]].time_unit=="s" else "Sample index"))
-    def trend_plot(self,p,ids,pct,pos):
-        curves,cols,xlabel=self.trend_data(ids,pct,pos);draw(p,curves,cols);p.setLabel("left","Normalized (%)");p.setLabel("bottom",xlabel);p.setYRange(0,100,padding=.03)
+    def trend_plot(self,p,ids,pct,pos,raw=False,preview=False):
+        curves,cols,xlabel=self.trend_data(ids,pct,pos,raw,preview);draw(p,curves,cols)
+        units={self.data[i].unit or "unspecified" for i in ids}
+        p.setLabel("left",(" / ".join(sorted(units)) if len(units)==1 else "Raw value (mixed units)") if raw else "Normalized (%)")
+        p.setLabel("bottom",xlabel)
+        if not raw:p.setYRange(0,100,padding=.03)
     def trends(self,v):
         h=row();v.addLayout(h);left=Q.QVBoxLayout();left.addWidget(label("WORKSPACE 03 / SIGNAL INVESTIGATION","micro"));left.addWidget(label("Signal Analysis Studio   ·   IMMERSIVE V7","heading"));left.addWidget(label("An expansive signal canvas with synchronized investigation panels.","sub"));h.addLayout(left,1)
         def browse():
@@ -329,14 +348,43 @@ class Desktop(LegacyApp):
             self.selected=set(range(min(4,len(self.data))));self.selection_changed();redraw();trace_table()
         h.addWidget(btn(f"☷ Browse {len(self.data)} channels ↗",browse,"primary"));h.addWidget(btn("↺ Restore four traces",restore));nums=kpis(v,[("Available signals",len(self.data)),("Active traces",len(self.selected)),("Visible samples",max(len(c.y) for c in self.data)),("Time window","Full")])
         bar,bl=frame("toolbar");v.addWidget(bar);rr=row();bl.addLayout(rr);width=field(rr,"WINDOW WIDTH",combo(["Full recording","50% of recording","25% of recording","10% of recording"]));pos=Q.QSlider(C.Qt.Orientation.Horizontal);pos.setRange(0,100);field(rr,"MOVE THROUGH RECORDING",pos);mode=field(rr,"CHART ARRANGEMENT",combo(["Two synchronized panels","One large panel"]));rr.addWidget(btn("↓ Export selected CSV / Excel",self.export_selected,"primary"))
+        extra=row();bl.addLayout(extra);scale=field(extra,"Y-AXIS SCALE",combo(["Normalized (%)","Raw engineering values"]));dual=Q.QCheckBox("Dual measurement cursors");extra.addWidget(dual);extra.addStretch()
+        extra.addWidget(label("A/B cursors use full-resolution sample values.","sub"))
         wa,la=frame();v.addWidget(wa);la.addWidget(label("PANEL A / PRIMARY SIGNALS","micro"));card_title(la,"Operating signal trends");p1=plot(420);la.addWidget(p1);read1=label("Hover over the graph to inspect values at the cursor.","status");la.addWidget(read1)
         wb,lb=frame();v.addWidget(wb);lb.addWidget(label("PANEL B / ADDITIONAL SIGNALS","micro"));card_title(lb,"Secondary signal trends");p2=plot(355);lb.addWidget(p2);read2=label("Hover over this graph to inspect secondary signals.","status");lb.addWidget(read2);p2.setXLink(p1)
+        measurements=table_card(v,"A/B Cursor Measurements — panel A",["Signal","Unit","Δ time / samples","A value","B value","Δ value"],[],160)
+        measurements.parentWidget().hide()
+        cursor_lines=[pg.InfiniteLine(angle=90,movable=True,pen=pg.mkPen("#ffbe67",width=2),label="A"),pg.InfiniteLine(angle=90,movable=True,pen=pg.mkPen("#58e0e0",width=2),label="B")]
         tw,tl=frame();v.addWidget(tw);tl.addWidget(label("TRACE MANAGEMENT","micro"));card_title(tl,"Active channels & signal ranges");tt=table([],[]);tt.setMinimumHeight(200);tl.addWidget(tt)
         def ids():return sorted(self.selected)[:12]
         def redraw(*_):
             pct=[100,50,25,10][width.currentIndex()];split=mode.currentIndex()==0;ss=ids();a=ss[:6] if split else ss;b=ss[6:] if split else []
-            self.trend_plot(p1,a,pct,pos.value());self.trend_plot(p2,b,pct,pos.value());wb.setVisible(split)
+            raw=scale.currentIndex()==1
+            self.trend_plot(p1,a,pct,pos.value(),raw);self.trend_plot(p2,b,pct,pos.value(),raw);wb.setVisible(split)
+            bases={(self.data[i].time_unit,self.data[i].metadata.get("clock_id")) for i in ss}
+            p2.setXLink(p1 if len(bases)<=1 else None)
+            if dual.isChecked() and a:
+                p1.getPlotItem().vb.updateAutoRange();xr=p1.viewRange()[0]
+                for f,line in zip((.25,.75),cursor_lines):
+                    p1.addItem(line,ignoreBounds=True);line.setValue(xr[0]+f*(xr[1]-xr[0]))
+            update_measurements()
             nums[1].setText(str(len(self.selected)));nums[2].setText(str(round(max((len(self.data[i].y) for i in ss),default=0)*pct/100)));nums[3].setText(f"{pct}% · {pos.value()}%")
+        def update_measurements(*_):
+            measurements.parentWidget().setVisible(dual.isChecked())
+            if not dual.isChecked():return
+            ss=ids();ss=ss[:6] if mode.currentIndex()==0 else ss
+            mixed=len({self.data[i].time_unit for i in ss})>1
+            rows=[]
+            for i in ss:
+                c=self.data[i];a=cursor_lines[0].value();b=cursor_lines[1].value()
+                if mixed:
+                    if 0<=a<len(c.y) and 0<=b<len(c.y):
+                        j=min(len(c.y)-1,int(round(a)));k=min(len(c.y)-1,int(round(b)));m=(k-j,c.y[j],c.y[k],c.y[k]-c.y[j])
+                    else:m=None
+                else:m=cursor_measurement(c.t,c.y,a,b,c.time_ordered)
+                rows.append([c.name,c.unit,*m] if m else [c.name,c.unit,"—","—","—","—"])
+            fill(measurements,["Signal","Unit","Δ time / samples","A value","B value","Δ value"],rows)
+        for line in cursor_lines:line.sigPositionChanged.connect(update_measurements)
         def color(i):
             col=Q.QColorDialog.getColor(G.QColor(self.colors.get(i,PALETTE[sorted(self.selected).index(i)%len(PALETTE)])),self)
             if col.isValid():self.colors[i]=col.name();redraw();trace_table()
@@ -353,11 +401,12 @@ class Desktop(LegacyApp):
                 for i in ss:
                     c=self.data[i]
                     if not len(c.y):continue
-                    k=int(np.clip(round(x),0,len(c.y)-1)) if mixed else int(np.argmin(np.abs(c.t-x)))
-                    values.append(f"{c.name}: {fmt(c.y[k])} {c.unit}")
+                    k=(int(round(x)) if 0<=x<=len(c.y)-1 else None) if mixed else nearest_index(c.t,x,c.time_ordered)
+                    if k is not None:values.append(f"{c.name}: {fmt(c.y[k])} {c.unit}")
                 out.setText(f"Cursor {x:.3f}  |  "+"   ·   ".join(values))
             p.scene().sigMouseMoved.connect(move)
-        cursor(p1,read1,False);cursor(p2,read2,True);width.currentIndexChanged.connect(redraw);pos.valueChanged.connect(redraw);mode.currentIndexChanged.connect(redraw);redraw();trace_table()
+        cursor(p1,read1,False);cursor(p2,read2,True);width.currentIndexChanged.connect(redraw);timer=C.QTimer(wb);timer.setSingleShot(True);timer.setInterval(85);timer.timeout.connect(redraw)
+        pos.valueChanged.connect(lambda _:timer.start());mode.currentIndexChanged.connect(redraw);scale.currentIndexChanged.connect(redraw);dual.toggled.connect(redraw);redraw();trace_table()
     def tabs(self,parent,names,factory,columns=5):
         bar=Q.QGridLayout();parent.addLayout(bar);bar.setSpacing(8);stack=Q.QStackedWidget();parent.addWidget(stack);buttons=[];pages=[]
         def activate(i):

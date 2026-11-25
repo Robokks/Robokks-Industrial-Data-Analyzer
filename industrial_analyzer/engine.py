@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -11,12 +11,14 @@ class Channel:
     t: np.ndarray
     unit: str = ''
     time_unit: str = 'sample'
+    metadata: dict = field(default_factory=dict)
 
     def __post_init__(self):
         self.y=np.asarray(self.y,dtype=float)
         self.t=np.asarray(self.t,dtype=float)
         if self.y.ndim!=1 or self.t.shape!=self.y.shape or not np.isfinite(self.t).all():
             raise ValueError("Invalid channel arrays")
+        self.time_ordered=bool(np.all(self.t[1:]>=self.t[:-1]))
 
     def rate(self):
         d=np.diff(self.t)
@@ -32,12 +34,43 @@ def load(path, sheet=0, delimiter=None, time_column=None, sample_rate=None, head
         from nptdms import TdmsFile
         with TdmsFile.open(p) as f:
             for g in f.groups():
-                for c in g.channels():
-                    y=np.asarray(c[:]);
-                    if y.dtype.kind not in 'biuf': continue
-                    try: t=c.time_track(); u='s'
-                    except (KeyError, ValueError): t=np.arange(len(y)); u='sample'
-                    out.append(Channel(f'{g.name}/{c.name}',y.astype(float),t,str(c.properties.get('unit_string','')),u))
+                channels=g.channels()
+                candidates={}
+                for c in channels:
+                    kind=np.dtype(c.dtype).kind
+                    name=c.name.strip().casefold()
+                    unit=str(c.properties.get('unit_string','')).strip().casefold()
+                    is_numeric_clock=kind in 'iuf' and name in ('time','timestamp','elapsed time','time (s)','time [s]') and (unit in ('s','sec','second','seconds') or name in ('time (s)','time [s]'))
+                    if kind!='M' and not is_numeric_clock:continue
+                    raw=np.asarray(c[:])
+                    if not len(raw):continue
+                    if kind=='M':
+                        if np.isnat(raw).any():continue
+                        t=(raw-raw[0])/np.timedelta64(1,'s')
+                        clock=f'{g.name}/{c.name} UTC origin {raw[0]}'
+                    else:
+                        t=raw.astype(float)
+                        clock=f'{g.name}/{c.name} numeric seconds'
+                    if np.isfinite(t).all() and np.all(t[1:]>t[:-1]):
+                        candidates.setdefault(len(t),[]).append((c.name,t,clock))
+                for c in channels:
+                    if np.dtype(c.dtype).kind not in 'biuf' or not len(c):continue
+                    y=np.asarray(c[:],dtype=float)
+                    props={str(k):str(v) for k,v in c.properties.items()}
+                    metadata={'group':g.name,'channel':c.name,'properties':props}
+                    try:
+                        t=c.time_track();u='s'
+                        if not np.isfinite(t).all() or not np.all(t[1:]>t[:-1]):raise ValueError('Invalid waveform time base')
+                        metadata.update(time_source='Waveform',clock_id=f"{g.name}/waveform/{props.get('wf_start_time','relative; origin unverified')}")
+                    except (KeyError, ValueError):
+                        matches=candidates.get(len(y),[])
+                        if len(matches)==1 and matches[0][0]!=c.name:
+                            name,t,clock=matches[0];u='s'
+                            metadata.update(time_source=f'Timestamp channel: {name}',clock_id=clock)
+                        else:
+                            t=np.arange(len(y),dtype=float);u='sample'
+                            metadata.update(time_source='Sample index (no unique valid clock)',clock_id=f'{g.name}/{c.name}/index')
+                    out.append(Channel(f'{g.name}/{c.name}',y,t,str(c.properties.get('unit_string','')),u,metadata))
         return out
     if p.suffix.lower() in ('.xlsx','.xls','.xlsm'): df=pd.read_excel(p,sheet_name=sheet,header=header)
     else: df=pd.read_csv(p,sep=delimiter or None,engine='python',header=header)
@@ -68,6 +101,8 @@ def describe(y):
     return dict(Valid=len(a),Missing=len(y)-len(a),Min=a.min(),Max=a.max(),Mean=a.mean(),Median=q[3],RMS=np.sqrt(np.mean(a*a)),**{'Std Dev':sd,'Peak-to-Peak':np.ptp(a),'Variance':sd**2,'P01':q[0],'P05':q[1],'Q1':q[2],'Q3':q[4],'P95':q[5],'P99':q[6],'IQR':q[4]-q[2],'Skewness':stats.skew(a) if sd>0 else np.nan,'Excess kurtosis':stats.kurtosis(a) if sd>0 else np.nan})
 
 def paired(a,b):
+    ca=a.metadata.get('clock_id');cb=b.metadata.get('clock_id')
+    if (ca or cb) and ca!=cb:raise ValueError('TDMS clock origins differ or are unverified; explicit alignment is required.')
     if a.time_unit!=b.time_unit or len(a.t)!=len(b.t) or not np.allclose(a.t,b.t,rtol=0,atol=1e-8): raise ValueError('Channels require matching time bases; automatic resampling is disabled.')
     return a.y,b.y
 

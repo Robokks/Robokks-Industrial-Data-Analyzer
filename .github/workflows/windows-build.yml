@@ -61,7 +61,7 @@ jobs:
         shell: pwsh
         run: |
           Set-Location $env:PROJECT
-          python -m bandit main.py engine.py safe_export.py v12_ui.py access.py
+          python -m bandit main.py engine.py safe_export.py v12_ui.py access.py performance.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pip_audit
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
