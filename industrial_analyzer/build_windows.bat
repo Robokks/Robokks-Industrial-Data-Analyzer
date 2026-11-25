@@ -8,10 +8,10 @@ set "PY=.venv\Scripts\python.exe"
 if errorlevel 1 exit /b 1
 %PY% -m pytest -q
 if errorlevel 1 exit /b 1
-%PY% -m bandit main.py engine.py safe_export.py v12_ui.py access.py performance.py engineering_tools.py data_workspace.py live_capture.py extra_ui.py recording_ops.py ui_theme.py
+%PY% -m bandit main.py engine.py safe_export.py v12_ui.py access.py performance.py engineering_tools.py data_workspace.py live_capture.py extra_ui.py recording_ops.py ui_theme.py release_smoke.py
 if errorlevel 1 exit /b 1
 %PY% -m pip_audit
 if errorlevel 1 exit /b 1
-%PY% -m PyInstaller --noconfirm --clean --windowed --name IndustrialAnalyzer --collect-all pyqtgraph --collect-all nptdms --hidden-import v12_ui main.py
+%PY% -m PyInstaller --noconfirm --clean --windowed --name IndustrialAnalyzer --collect-all pyqtgraph --collect-all nptdms --hidden-import v12_ui --hidden-import extra_ui --hidden-import release_smoke main.py
 if errorlevel 1 exit /b 1
  echo Build output: dist\IndustrialAnalyzer\IndustrialAnalyzer.exe

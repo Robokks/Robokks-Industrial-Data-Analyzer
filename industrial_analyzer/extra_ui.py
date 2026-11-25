@@ -1,5 +1,6 @@
 """Extended native dialogs and cancellable I/O operations."""
 import os
+import logging
 import tempfile
 import threading
 from pathlib import Path
@@ -41,7 +42,9 @@ class BusyDialog(Q.QDialog):
 def job(app,title,fn):
     if getattr(app,"_active_job",None) is not None:raise RuntimeError("Another job is active")
     w=Worker(fn);dlg=BusyDialog(app,w,title);app._active_job=w
-    w.finished.connect(dlg.accept);w.start()
+    w.finished.connect(dlg.accept,C.Qt.ConnectionType.QueuedConnection)
+    # Start only after the modal event loop begins; fast jobs cannot finish before exec().
+    C.QTimer.singleShot(0,w.start)
     try:
         dlg.exec();w.wait()
         if w.cancel.is_set():raise InterruptedError("Operation cancelled")
@@ -52,7 +55,9 @@ def job(app,title,fn):
         app._active_job=None;dlg.deleteLater();w.deleteLater()
 
 def warn(app,title,exc):
-    if not isinstance(exc,InterruptedError):Q.QMessageBox.warning(app,title,str(exc))
+    if not isinstance(exc,InterruptedError):
+        logging.error("%s: %s",title,exc,exc_info=(type(exc),exc,exc.__traceback__))
+        Q.QMessageBox.warning(app,title,str(exc))
 
 def install_data(app,channels,specs=None,selection=None,colors=None):
     app.data=channels;app.recordings=list(specs or []);app.source=f"{len(app.recordings)} recording(s)" if app.recordings else "Derived / captured data"
@@ -83,7 +88,7 @@ def import_options(app,path):
 
 def open_recordings(app,append=False):
     if not app.permitted("Open data files"):return
-    paths,_=Q.QFileDialog.getOpenFileNames(app,"Open recording(s)","","Supported files (*.tdms *.csv *.txt *.xlsx *.xls *.xlsm)")
+    paths,_=Q.QFileDialog.getOpenFileNames(app,"Open recording(s)","","Supported files (*.tdms *.csv *.txt *.xlsx *.xls *.xlsm);;All files (*)",options=Q.QFileDialog.Option.DontUseNativeDialog)
     if not paths:return
     try:
         specs=[]
@@ -102,7 +107,7 @@ def open_recordings(app,append=False):
 
 def range_browser(app):
     if not app.permitted("Open data files"):return
-    path,_=Q.QFileDialog.getOpenFileName(app,"Browse large TDMS recording","","TDMS (*.tdms)")
+    path,_=Q.QFileDialog.getOpenFileName(app,"Browse large TDMS recording","","TDMS (*.tdms)",options=Q.QFileDialog.Option.DontUseNativeDialog)
     if not path:return
     try:meta=job(app,"Read TDMS metadata",lambda stop:dw.catalog(path))
     except Exception as exc:warn(app,"TDMS metadata",exc);return
@@ -334,14 +339,14 @@ def graph_studio(app):
         p.clear();right.clear();marks.clear();saved.clear();x=app.data[a.currentIndex()];y=app.data[b.currentIndex()]
         if x.time_unit!=y.time_unit or x.metadata.get("clock_id")!=y.metadata.get("clock_id"):
             note.setText("Cannot link independent clocks. Use separate trend panels.");return
-        p.plot(x.t,x.y,name=x.name,pen=pg.mkPen("#58e0e0",width=2),autoDownsample=True,downsampleMethod="peak",connect="finite")
-        right.addItem(pg.PlotDataItem(y.t,y.y,pen=pg.mkPen("#ffbe67",width=2),autoDownsample=True,downsampleMethod="peak",connect="finite"))
-        p.setLabel("left",x.name,units=x.unit or None,color="#58e0e0");p.setLabel("right",y.name,units=y.unit or None,color="#ffbe67");p.setLabel("bottom","Time (s)" if x.time_unit=="s" else "Sample index")
+        p.plot(x.t,x.y,name=x.name,pen=pg.mkPen(theme.trace_color("#58e0e0"),width=2),autoDownsample=True,downsampleMethod="peak",connect="finite")
+        right.addItem(pg.PlotDataItem(y.t,y.y,pen=pg.mkPen(theme.trace_color("#ffbe67"),width=2),autoDownsample=True,downsampleMethod="peak",connect="finite"))
+        p.setLabel("left",x.name,units=x.unit or None,color=theme.trace_color("#58e0e0"));p.setLabel("right",y.name,units=y.unit or None,color=theme.trace_color("#ffbe67"));p.setLabel("bottom","Time (s)" if x.time_unit=="s" else "Sample index")
         p.enableAutoRange();right.enableAutoRange();resize();note.setText("Left: "+x.name+"  ·  Right: "+y.name+"  ·  Bookmark positions are session-local.")
     def annotate():
         text=annotation.text().strip()[:80]
         if not text:return
-        lo,hi=p.viewRange()[0];x=(lo+hi)/2;line=pg.InfiniteLine(pos=x,angle=90,movable=True,label=text.replace("{","{{").replace("}","}}"),pen=pg.mkPen("#ffbe67"));p.addItem(line,ignoreBounds=True);marks.append(line);saved.append((text,x));annotation.clear()
+        lo,hi=p.viewRange()[0];x=(lo+hi)/2;line=pg.InfiniteLine(pos=x,angle=90,movable=True,label=text.replace("{","{{").replace("}","}}"),pen=pg.mkPen(theme.trace_color("#ffbe67")),labelOpts={"color":theme.colors()["text"]});p.addItem(line,ignoreBounds=True);marks.append(line);saved.append((text,x));annotation.clear()
     def export_bookmarks():
         app.do_export(["Label","Position"],[(name,line.value()) for (name,_),line in zip(saved,marks)])
     def save_png():
@@ -424,3 +429,56 @@ def operating_map(app):
             status.setText(f"{np.isfinite(z).sum()} populated bins · display color scale 0–100%; exported results retain actual values.")
         except Exception as exc:status.setText(str(exc));p.clear();last.clear()
     bar=Q.QHBoxLayout();l.addLayout(bar);bar.addWidget(ui().btn("Calculate map",run,"primary"));bar.addWidget(ui().btn("Export bins CSV / Excel",lambda:app.do_export(["RPM low","RPM high","Nm low","Nm high","Count","Efficiency %"],last) if last else None));bar.addWidget(ui().btn("Close",d.accept));d.exec()
+
+
+class ToolCatalog(Q.QDialog):
+    """Visible native launcher; permissions are explained, not silently hidden."""
+    def __init__(self,app):
+        super().__init__(app);self.app=app;self.chosen=None
+        self.setWindowTitle("Extended Tools");self.resize(850,720);self.setMinimumSize(620,460)
+        outer=Q.QVBoxLayout(self);outer.setContentsMargins(22,18,22,18);outer.setSpacing(12)
+        outer.addWidget(ui().label("EXTENDED ENGINEERING WORKSPACE","micro"))
+        outer.addWidget(ui().label("Choose a tool","heading"))
+        outer.addWidget(ui().label("Demo mode: explore engineering and graph tools with sample data. File import, saved recordings and live capture require sign-in." if app.session.demo else "Choose a recording, engineering, graph or reporting operation.","sub"))
+        sc=Q.QScrollArea();sc.setWidgetResizable(True);outer.addWidget(sc,1)
+        content=Q.QWidget();content.setObjectName("page");sc.setWidget(content);v=Q.QVBoxLayout(content);v.setSpacing(12)
+        entries=[
+            ("Recordings & workspace",[
+                ("Open multiple recordings","Import TDMS, CSV, TXT or Excel.",lambda:open_recordings(app),("Open data files",)),
+                ("Append recordings","Add files to an existing file-backed workspace.",lambda:open_recordings(app,True),("Open data files",)),
+                ("Large TDMS range browser","Inspect groups and stream whole-channel statistics.",lambda:range_browser(app),("Open data files",)),
+                ("Save workspace","Save file references, selections and colors.",lambda:save_workspace(app),("Open data files","Export data & reports")),
+                ("Restore workspace","Open a previously saved workspace.",lambda:restore_workspace(app),("Open data files",)),
+            ]),
+            ("Engineering & graph studio",[
+                ("Extended engineering workstation","Mechanical, electrical, vibration and mathematical tools.",lambda:EngineeringDialog(app).exec(),("Advanced diagnostics","Modify analysis settings")),
+                ("Independent-axis graph studio","Two engineering axes, annotations and PNG export.",lambda:graph_studio(app),("View trends & statistics",)),
+                ("Align / split / merge recordings","Create new channels without changing source files.",lambda:recording_editor(app),("Modify analysis settings",)),
+                ("Speed-torque efficiency map","Power-weighted operating-point analysis.",lambda:operating_map(app),("Modify analysis settings","Advanced diagnostics")),
+            ]),
+            ("Reporting & LabVIEW",[
+                ("Batch statistical report","Summarize a collection of recordings.",lambda:batch_summary(app),("Open data files","Export data & reports")),
+                ("LabVIEW local TCP / UDP capture","Receive measurement frames on localhost.",lambda:capture_dialog(app),("Open data files","Modify analysis settings")),
+                ("Export all-channel statistical summary","Save measurement statistics.",lambda:app.do_export(["Channel","Unit","Samples","Min","Max","Mean","RMS"],((c.name,c.unit,len(c.y),d.get("Min"),d.get("Max"),d.get("Mean"),d.get("RMS")) for c in app.data for d in [describe(c.y)])),("Export data & reports",)),
+            ])
+        ]
+        self.tool_buttons={}
+        for section,items in entries:
+            card,cl=ui().frame();v.addWidget(card);ui().card_title(cl,section)
+            for title,desc,callback,keys in items:
+                allowed=all(app.permitted(k) for k in keys)
+                text=title if allowed else title+(" · Sign in" if app.session.demo else " · Restricted")
+                button=ui().btn(text,lambda checked=False,cb=callback,ks=keys:self.select(cb,ks))
+                button.setObjectName("tool");button.setMinimumHeight(40)
+                button.setToolTip(desc if allowed else desc+" Account permission required.")
+                button.setEnabled(allowed or app.session.demo);self.tool_buttons[title]=button
+                cl.addWidget(button);cl.addWidget(ui().label(desc,"sub"))
+        v.addStretch(1);outer.addWidget(ui().btn("Close",self.reject))
+    def select(self,callback,keys):
+        self.chosen=(callback,keys);self.accept()
+
+def open_tool_catalog(app):
+    dlg=ToolCatalog(app)
+    if dlg.exec()!=Q.QDialog.DialogCode.Accepted or dlg.chosen is None:return
+    callback,keys=dlg.chosen
+    if all(app.ensure_access(k) for k in keys):callback()

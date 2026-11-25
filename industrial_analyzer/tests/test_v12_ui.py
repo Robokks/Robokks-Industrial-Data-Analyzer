@@ -53,7 +53,7 @@ def test_native_reference_screens(tmp_path):
     try:
         assert len(win.data)==100 and len(win.data[0].y)==600
         assert win.data[0].y[0]==25
-        assert not win.open_btn.isEnabled()
+        assert win.open_btn.isEnabled() and 'Sign in' in win.open_btn.text()
         for i,title in enumerate(TITLES):
             win.show_page(i);app.processEvents()
             assert win.title.text()==title

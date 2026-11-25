@@ -103,7 +103,7 @@ jobs:
         shell: pwsh
         run: |
           Set-Location $env:PROJECT
-          python -m bandit main.py engine.py safe_export.py v12_ui.py access.py performance.py engineering_tools.py data_workspace.py live_capture.py extra_ui.py recording_ops.py ui_theme.py
+          python -m bandit main.py engine.py safe_export.py v12_ui.py access.py performance.py engineering_tools.py data_workspace.py live_capture.py extra_ui.py recording_ops.py ui_theme.py release_smoke.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pip_audit
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
@@ -117,14 +117,32 @@ jobs:
         shell: pwsh
         run: |
           Set-Location $env:PROJECT
-          python -m PyInstaller --noconfirm --clean --windowed --name IndustrialAnalyzer --collect-all pyqtgraph --collect-all nptdms --hidden-import analyzer_native --hidden-import v12_ui main.py
+          python -m PyInstaller --noconfirm --clean --windowed --name IndustrialAnalyzer --collect-all pyqtgraph --collect-all nptdms --hidden-import analyzer_native --hidden-import v12_ui --hidden-import extra_ui --hidden-import release_smoke main.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $exe = Resolve-Path dist/IndustrialAnalyzer/IndustrialAnalyzer.exe
+          $report = Join-Path (Get-Location) "packaged-smoke.json"
+          $smoke = Start-Process -FilePath $exe -ArgumentList @("--self-test", ('"{0}"' -f $report)) -PassThru
+          if (-not $smoke.WaitForExit(180000)) {
+            Stop-Process -Id $smoke.Id -Force
+            throw "Packaged UI action smoke test timed out"
+          }
+          $smoke.Refresh()
+          if (Test-Path $report) { Get-Content $report }
+          if ($smoke.ExitCode -ne 0 -or -not (Test-Path $report)) { throw "Packaged UI action smoke test failed" }
+          $proof = Get-Content $report -Raw | ConvertFrom-Json
+          if ($proof.status -ne "passed") { throw "Packaged UI action smoke test did not pass" }
           $p = Start-Process $exe -PassThru
           Start-Sleep -Seconds 15
           $p.Refresh()
           if ($p.HasExited) { throw "Packaged application exited during startup: $($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
+      - name: Upload packaged action test evidence
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.package }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Packaged-UI-action-test
+          path: ${{ env.PROJECT }}/packaged-smoke.json
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.package }}
         with:

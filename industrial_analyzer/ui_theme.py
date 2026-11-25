@@ -17,11 +17,14 @@ LIGHT_REPLACEMENTS={
 "#30536b":"#b7cddd","#365369":"#b8cedf","#34506b":"#b6c9da","#26394b":"#d5e1eb",
 "#e9f2fb":"#142d43","#73e5df":"#087d98","#6bdbde":"#087386","#9ab7c9":"#49647a","#65dce4":"#087d98",
 "#b9e5ed":"#24516a","#e5f3ff":"#17354d","#aabbd0":"#47647d","#b9d4e7":"#34536a","#678095":"#778b9c",
-"#1c5267":"#cbe6f3","#58e0e0":"#0b8ca6","#67dfe3":"#108ba2","#5fe4e2":"#0a8299","#53cce2":"#168fab",
+"#1c5267":"#cbe6f3","#538196":"#7994aa","#2494a5":"#087d98","#8be9e8":"#b1e3ec","#156474":"#087d98","#3985aa":"#087d98","#2cb5d0":"#087d98","#4679db":"#315cb4","#58e0e0":"#0b8ca6","#67dfe3":"#108ba2","#5fe4e2":"#0a8299","#53cce2":"#168fab",
 }
 FONT="Segoe UI"
 MODE="dark"
 _FONT_READY=False
+_STYLE_READY=False
+_APPLIED_MODE=None
+_APPLIED_SHEET=None
 
 def configure_font(app):
     global FONT,_FONT_READY
@@ -71,19 +74,58 @@ QMenu::item:selected {{background:{'#cbe6f3' if mode=='light' else '#25445e'};}}
 QTabWidget::pane {{border:1px solid {colors()['grid']};border-radius:8px;}}
 QTabBar::tab {{background:{colors()['background']};padding:10px 14px;border:1px solid {colors()['grid']};}}
 QTabBar::tab:selected {{background:{'#d8e9f9' if mode=='light' else '#1c334b'};}}
+QWidget#page,QWidget#workspace,QDialog,QMenu {{background:{colors()['background']};}}
+QTreeWidget,QTableWidget,QListWidget {{background:{colors()['plot']};color:{colors()['text']};alternate-background-color:{'#eef5fb' if mode=='light' else '#13283a'};selection-background-color:{'#cbe6f3' if mode=='light' else '#16465b'};selection-color:{colors()['text']};}}
+QAbstractItemView::item:hover {{background:{'#e0edf7' if mode=='light' else '#20384e'};}}
+QLineEdit:disabled,QComboBox:disabled,QAbstractSpinBox:disabled {{background:{'#e3eaf1' if mode=='light' else '#132435'};color:{colors()['muted']};}}
+QProgressBar {{border:1px solid {colors()['grid']};border-radius:6px;background:{colors()['plot']};color:{colors()['text']};text-align:center;}}
+QProgressBar::chunk {{background:{colors()['accent']};border-radius:5px;}}
+QScrollBar:horizontal {{background:{colors()['background']};height:12px;margin:0;}}
+QScrollBar::handle:horizontal {{background:{'#9cb4c8' if mode=='light' else '#34546a'};border-radius:5px;min-width:28px;}}
+QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal {{width:0;}}
+QFrame#separator {{color:{colors()['grid']};}}
+QLabel#brandLogo {{background:#087d98;color:white;border-radius:10px;}}
 QToolTip {{color:{colors()['text']};background:{colors()['plot']};border:1px solid {colors()['grid']};}}
 """
     return result
 
 def apply(app,base,mode):
+    """Set Fusion once. Do not rebuild the style engine on each theme change."""
+    global _STYLE_READY,_APPLIED_MODE,_APPLIED_SHEET
     configure_font(app)
-    app.setStyle("Fusion")
-    app.setStyleSheet(stylesheet(base,mode))
-    pal=G.QPalette()
-    c=colors()
-    for role,key in [(G.QPalette.ColorRole.Window,"background"),(G.QPalette.ColorRole.WindowText,"text"),(G.QPalette.ColorRole.Base,"plot"),(G.QPalette.ColorRole.Text,"text"),(G.QPalette.ColorRole.Button,"background"),(G.QPalette.ColorRole.ButtonText,"text"),(G.QPalette.ColorRole.Highlight,"accent")]:
+    if not _STYLE_READY:
+        app.setStyle("Fusion")
+        _STYLE_READY=True
+    sheet=stylesheet(base,mode)
+    if _APPLIED_MODE==mode and _APPLIED_SHEET==sheet and app.styleSheet()==sheet:
+        return False
+    c=colors();pal=G.QPalette()
+    import pyqtgraph as pg
+    pg.setConfigOptions(background=c["plot"],foreground=c["text"])
+    for role,key in [(G.QPalette.ColorRole.Window,"background"),(G.QPalette.ColorRole.WindowText,"text"),(G.QPalette.ColorRole.Base,"plot"),(G.QPalette.ColorRole.Text,"text"),(G.QPalette.ColorRole.Button,"background"),(G.QPalette.ColorRole.ButtonText,"text"),(G.QPalette.ColorRole.ToolTipBase,"plot"),(G.QPalette.ColorRole.ToolTipText,"text"),(G.QPalette.ColorRole.Link,"accent")]:
         pal.setColor(role,G.QColor(c[key]))
+    pal.setColor(G.QPalette.ColorRole.Highlight,G.QColor("#cbe6f3" if mode=="light" else "#16465b"))
+    pal.setColor(G.QPalette.ColorRole.HighlightedText,G.QColor(c["text"]))
+    pal.setColor(G.QPalette.ColorRole.AlternateBase,G.QColor("#eef5fb" if mode=="light" else "#13283a"))
+    for role in (G.QPalette.ColorRole.Text,G.QPalette.ColorRole.WindowText,G.QPalette.ColorRole.ButtonText):
+        pal.setColor(G.QPalette.ColorGroup.Disabled,role,G.QColor(c["muted"]))
     app.setPalette(pal)
+    app.setStyleSheet(sheet)
+    _APPLIED_MODE=mode;_APPLIED_SHEET=sheet
+    return True
+
+DARK_TRACES=["#4dd9e8","#ffbe67","#8e95ff","#55d6a0","#ff7588","#cb91ef","#78b6ff","#f4d35e","#58e0e0","#245a70"]
+LIGHT_TRACES=["#087d98","#ae6006","#5656c0","#14845b","#c43f62","#8752a6","#286ab1","#a7780b","#087d98","#c1e3ee"]
+
+def trace_color(color,mode=None):
+    mode=mode or MODE
+    return dict(zip(DARK_TRACES,LIGHT_TRACES)).get(color.lower(),color) if mode=="light" else color
+
+def contrasting_text(color):
+    c=G.QColor(color)
+    def linear(v):return v/12.92 if v<=.04045 else ((v+.055)/1.055)**2.4
+    luminance=sum(w*linear(v) for w,v in zip((.2126,.7152,.0722),(c.redF(),c.greenF(),c.blueF())))
+    return "#101820" if luminance>.18 else "#ffffff"
 
 class ResponsiveStack(Q.QStackedWidget):
     """Hidden workbenches must not impose their minimum width on the visible page."""
@@ -115,15 +157,18 @@ def mark_grid(grid,columns,minimum=210):
     grid.adaptive_columns=columns;grid.adaptive_minimum=minimum
     return grid
 
-def reflow(layout,width):
+def reflow(layout,width,_visited=None):
     if layout is None or width<=0:return
+    if _visited is None:_visited=set()
+    key=(layout,int(width))
+    if key in _visited:return
+    _visited.add(key)
     margins=layout.contentsMargins()
     available=max(120,width-margins.left()-margins.right())
     if isinstance(layout,Q.QStackedLayout):
-        for i in range(layout.count()):
-            w=layout.widget(i)
-            if w is not None:reflow(w.layout(),available)
-        layout.invalidate();return
+        w=layout.currentWidget()
+        if w is not None:reflow(w.layout(),available,_visited)
+        return
     if isinstance(layout,Q.QGridLayout) and hasattr(layout,"adaptive_columns"):
         items=[]
         for i in range(layout.count()):
@@ -144,16 +189,15 @@ def reflow(layout,width):
         # First allow children to compact before calculating horizontal requirements.
         for i in range(layout.count()):
             item=layout.itemAt(i)
-            if item.layout():reflow(item.layout(),available)
-            elif item.widget() and item.widget().layout():reflow(item.widget().layout(),available)
+            if item.layout():reflow(item.layout(),available,_visited)
+            elif item.widget() and item.widget().layout() and not isinstance(item.widget(),(Q.QAbstractItemView,Q.QComboBox,Q.QAbstractSpinBox,Q.QGraphicsView,Q.QAbstractScrollArea)):reflow(item.widget().layout(),available,_visited)
         layout.adapt(available)
         n=sum(1 for i in range(layout.count()) if not layout.itemAt(i).spacerItem())
         child_width=max(120,(available-max(0,n-1)*layout.spacing())//max(1,n)) if layout.direction()==layout.Direction.LeftToRight else available
     else:child_width=available
     for i in range(layout.count()):
         item=layout.itemAt(i);w=item.widget()
-        if item.layout():reflow(item.layout(),child_width)
+        if item.layout():reflow(item.layout(),child_width,_visited)
         elif w is not None and w.layout() and not isinstance(w,(Q.QAbstractItemView,Q.QComboBox,Q.QAbstractSpinBox,Q.QGraphicsView,Q.QAbstractScrollArea)):
-            reflow(w.layout(),child_width)
-            w.updateGeometry()
-    layout.invalidate()
+            reflow(w.layout(),child_width,_visited)
+    # Qt invalidates modified grids and rows itself. Avoid repeated global geometry churn.

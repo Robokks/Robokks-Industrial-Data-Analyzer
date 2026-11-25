@@ -1,5 +1,6 @@
 """Native V12.2 presentation layer; no HTML, JavaScript, or WebView."""
 import sys
+import logging
 import time
 from pathlib import Path
 import numpy as np
@@ -104,13 +105,52 @@ def plot(height=310):
         p.getAxis(a).setPen(pg.mkPen(theme.colors()["grid"]));p.getAxis(a).setTextPen(pg.mkPen(theme.colors()["axis"]))
     p.addLegend(offset=(12,12),labelTextColor=theme.colors()["text"])
     p.setClipToView(True)
+    p._analyzer_theme=theme.MODE
     return p
 
+def apply_plot_theme(p):
+    previous=getattr(p,"_analyzer_theme","dark")
+    if previous==theme.MODE:return
+    c=theme.colors()
+    p.setBackground(c["plot"])
+    for a in ("left","bottom","right","top"):
+        axis=p.getAxis(a);axis.setPen(pg.mkPen(c["grid"]));axis.setTextPen(pg.mkPen(c["axis"]))
+        axis.setLabel(text=axis.labelText,units=axis.labelUnits,unitPrefix=getattr(axis,"labelUnitPrefix",""),color=c["axis"])
+    legend=p.plotItem.legend
+    if legend is not None and hasattr(legend,"setLabelTextColor"):legend.setLabelTextColor(c["text"])
+    mapping=dict(zip(theme.DARK_TRACES,theme.LIGHT_TRACES)) if theme.MODE=="light" else dict(zip(theme.LIGHT_TRACES,theme.DARK_TRACES))
+    def paint(value,brush=False):
+        if value is None:return None
+        try:
+            obj=pg.mkBrush(value) if brush else pg.mkPen(value)
+            name=obj.color().name()
+            if name not in mapping:return None
+            obj.setColor(G.QColor(mapping[name]));return obj
+        except (TypeError,ValueError):return None
+    for item in p.plotItem.items:
+        if isinstance(item,pg.PlotDataItem):
+            pen=paint(item.opts.get("pen"))
+            if pen is not None:item.setPen(pen)
+            brush=paint(item.opts.get("symbolBrush"),True)
+            if brush is not None:item.setSymbolBrush(brush)
+            symbol_pen=paint(item.opts.get("symbolPen"))
+            if symbol_pen is not None:item.setSymbolPen(symbol_pen)
+        elif isinstance(item,pg.BarGraphItem):
+            brush=paint(item.opts.get("brush"),True);pen=paint(item.opts.get("pen"));opts={}
+            if brush is not None:opts["brush"]=brush
+            if pen is not None:opts["pen"]=pen
+            if opts:item.setOpts(**opts)
+        elif isinstance(item,pg.InfiniteLine):
+            pen=paint(item.pen)
+            if pen is not None:item.setPen(pen)
+            if getattr(item,"label",None) is not None:item.label.setColor(c["text"])
+    p._analyzer_theme=theme.MODE
+
 def draw(p,curves,colors=None):
-    p.clear()
+    apply_plot_theme(p);p.clear()
     for i,(x,y,n) in enumerate(curves):
         col=(colors or PALETTE)[i%len(colors or PALETTE)]
-        if theme.MODE=="light":col=dict(zip(PALETTE,["#087d98","#ae6006","#5656c0","#14845b","#c43f62","#8752a6","#286ab1","#a7780b"])).get(col,col)
+        col=theme.trace_color(col)
         x=np.asarray(x);y=np.asarray(y)
         if n=="Histogram" and len(x)>1:
             p.addItem(pg.BarGraphItem(x=x,height=y,width=.9*abs(x[1]-x[0]),brush=col,pen=None))
@@ -152,12 +192,12 @@ class Orbit(Q.QWidget):
         grad=G.QLinearGradient(cx-50,cy-50,cx+50,cy+50);grad.setColorAt(0,G.QColor("#1d8d9c"));grad.setColorAt(1,G.QColor("#1d4269"))
         p.setBrush(G.QBrush(grad));p.setPen(G.QPen(G.QColor("#83e6e9"),1));p.drawRoundedRect(C.QRectF(cx-50,cy-50,100,100),26,26)
         p.setPen(G.QColor("#e9ffff"));f=G.QFont(theme.FONT,32);f.setBold(True);p.setFont(f);p.drawText(C.QRectF(cx-50,cy-50,100,100),C.Qt.AlignmentFlag.AlignCenter,"IA")
-        p.setFont(G.QFont(theme.FONT,8));p.setPen(G.QColor("#a8eced"));p.drawText(C.QRectF(0,0,self.width(),18),C.Qt.AlignmentFlag.AlignCenter,"S I G N A L   I N T E L L I G E N C E");p.drawText(C.QRectF(0,self.height()-18,self.width(),18),C.Qt.AlignmentFlag.AlignCenter,"1 0 0 - C H A N N E L   R E A D Y")
+        p.setFont(G.QFont(theme.FONT,8));p.setPen(G.QColor(theme.colors()["muted"]));p.drawText(C.QRectF(0,0,self.width(),18),C.Qt.AlignmentFlag.AlignCenter,"S I G N A L   I N T E L L I G E N C E");p.drawText(C.QRectF(0,self.height()-18,self.width(),18),C.Qt.AlignmentFlag.AlignCenter,"1 0 0 - C H A N N E L   R E A D Y")
         p.end()
 
 class Login(Q.QDialog):
-    def __init__(self,store,parent=None):
-        super().__init__(parent);self.store=store;self.session=None;self.setWindowTitle("INDUSTRIAL / ANALYZER — Secure Engineering Workspace");self.resize(1080,600);self.setMinimumSize(840,520)
+    def __init__(self,store,parent=None,allow_demo=True):
+        super().__init__(parent);self.store=store;self.allow_demo=allow_demo;self.session=None;self.setWindowTitle("INDUSTRIAL / ANALYZER — Secure Engineering Workspace");self.resize(1080,600);self.setMinimumSize(840,520)
         layout=Q.QHBoxLayout();layout.setSpacing(16);self.setLayout(layout)
         art,al=frame("hero",42);layout.addWidget(art,5);al.addWidget(label("INDUSTRIAL / ANALYZER","section"));al.addStretch();al.addWidget(label("SECURE ENGINEERING WORKSPACE","micro"));al.addWidget(label("Intelligence\nbehind every","heroTitle"));al.addWidget(label("signal.","heroAccent"));al.addWidget(label("Explore trends, investigate anomalies and turn recorded machine data into engineering decisions.","sub"));al.addStretch();al.addWidget(label("OFFLINE ANALYSIS · ROLE-AWARE WORKSPACE · V12","micro"))
         w,l=frame("card",30);layout.addWidget(w,4);l.addStretch();self.first=store.empty()
@@ -169,10 +209,11 @@ class Login(Q.QDialog):
         l.addWidget(label("Username","sub"));l.addWidget(self.user);l.addWidget(label("Password","sub"));l.addWidget(self.pw);self.confirm=password()
         if self.first:l.addWidget(label("Confirm password","sub"));l.addWidget(self.confirm)
         self.error=label("","status");self.error.hide();l.addWidget(self.error)
-        l.addWidget(btn("Explore demo (no account)",self.demo));submit=btn("Create administrator →" if self.first else "Sign in →",self.submit,"primary");submit.setDefault(True);l.addWidget(submit)
+        if self.allow_demo:l.addWidget(btn("Explore demo (no account)",self.demo))
+        submit=btn("Create administrator →" if self.first else "Sign in →",self.submit,"primary");submit.setDefault(True);l.addWidget(submit)
         l.addWidget(label("Demo access uses synthetic data only. Local accounts are protected by password hashing and OS file permissions; this is not a tamper-proof security boundary.","sub"));l.addStretch()
     def demo(self):
-        self.session=Session("Demo Engineer","Administrator",True);self.accept()
+        if self.allow_demo:self.session=Session("Demo Engineer","Administrator",True);self.accept()
     def submit(self):
         try:
             if self.first:
@@ -186,12 +227,12 @@ class Login(Q.QDialog):
 class Desktop(LegacyApp):
     def __init__(self,store,session):
         Q.QMainWindow.__init__(self)
-        self.store=store;self.session=session;self.data=reference_demo();self.source="Telegram_Demo_100_Parameters";self.selected=set(range(4));self.colors={};self.page=0;self.pages={};self.dirty=set(range(9));self._data_identity=id(self.data);self._stats={};self.last_activity=time.monotonic();self.recordings=[];self.file_channel_count=0;self._active_job=None
+        self.store=store;self.session=session;self.data=reference_demo();self.source="Telegram_Demo_100_Parameters";self.selected=set(range(4));self.colors={};self.page=0;self.pages={};self.dirty=set(range(9));self._data_identity=id(self.data);self._stats={};self.last_activity=time.monotonic();self.recordings=[];self.file_channel_count=0;self._active_job=None;self._theme_changing=False
         self.setWindowTitle("INDUSTRIAL / ANALYZER — V12.2 Desktop");self.resize(1440,900);self.setMinimumSize(1024,640)
         root=Q.QWidget();root.setObjectName("workspace");self.setCentralWidget(root);outer=Q.QHBoxLayout(root);outer.setContentsMargins(0,0,0,0);outer.setSpacing(0)
         side=Q.QFrame();side.setObjectName("sidebar");side.setFixedWidth(236);sl=Q.QVBoxLayout(side);sl.setContentsMargins(13,22,13,20);sl.setSpacing(5);outer.addWidget(side)
-        brand=Q.QHBoxLayout();brand.setSpacing(10);logo=label("IA","section");logo.setFixedSize(38,38);logo.setAlignment(C.Qt.AlignmentFlag.AlignCenter);logo.setStyleSheet("background:#278fb3;border-radius:10px;color:white;");brand.addWidget(logo);bl=Q.QVBoxLayout();bl.setSpacing(2);bl.addWidget(label("INDUSTRIAL","section"));bl.addWidget(label("D A T A   A N A L Y Z E R","micro"));brand.addLayout(bl,1);sl.addLayout(brand)
-        line=Q.QFrame();line.setFrameShape(Q.QFrame.Shape.HLine);line.setStyleSheet("color:#294156;");sl.addSpacing(14);sl.addWidget(line);sl.addSpacing(12)
+        brand=Q.QHBoxLayout();brand.setSpacing(10);logo=label("IA","brandLogo");logo.setFixedSize(38,38);logo.setAlignment(C.Qt.AlignmentFlag.AlignCenter);brand.addWidget(logo);bl=Q.QVBoxLayout();bl.setSpacing(2);bl.addWidget(label("INDUSTRIAL","section"));bl.addWidget(label("D A T A   A N A L Y Z E R","micro"));brand.addLayout(bl,1);sl.addLayout(brand)
+        line=Q.QFrame();line.setFrameShape(Q.QFrame.Shape.HLine);line.setObjectName("separator");sl.addSpacing(14);sl.addWidget(line);sl.addSpacing(12)
         self.nav=[]
         for i,n in enumerate(PAGES):
             b=btn(f"{i+1:02d}   {n}",lambda checked=False,i=i:self.show_page(i),"nav");b.setCheckable(True);b.setMinimumHeight(37);sl.addWidget(b);self.nav.append(b)
@@ -202,39 +243,48 @@ class Desktop(LegacyApp):
         self.open_btn=btn("Open data file",self.open_file,"primary");top.addWidget(self.open_btn);top.addWidget(btn("Reset Demo",self.reset));self.main.addLayout(top)
         status_row=Q.QHBoxLayout();status_row.setSpacing(8);self.userchip=label("","pill");self.badge=label("","pill");self.badge.setMaximumWidth(420);status_row.addWidget(self.userchip);status_row.addWidget(self.badge);status_row.addStretch(1);self.main.addLayout(status_row)
         self.theme_selector.currentTextChanged.connect(self.change_theme)
-        divider=Q.QFrame();divider.setFrameShape(Q.QFrame.Shape.HLine);divider.setStyleSheet("color:#294156");self.main.addWidget(divider)
+        divider=Q.QFrame();divider.setFrameShape(Q.QFrame.Shape.HLine);divider.setObjectName("separator");self.main.addWidget(divider)
         self.scroll=Q.QScrollArea();self.scroll.setWidgetResizable(True);self.scroll.setAlignment(C.Qt.AlignmentFlag.AlignTop);self.main.addWidget(self.scroll,1)
         self.layout_timer=C.QTimer(self);self.layout_timer.setSingleShot(True);self.layout_timer.setInterval(40);self.layout_timer.timeout.connect(self.reflow_page)
         self.apply_role();self.show_page(0);Q.QApplication.instance().installEventFilter(self)
         self.idle= C.QTimer(self);self.idle.timeout.connect(self.check_idle);self.idle.start(30000)
     def resizeEvent(self,event):
         super().resizeEvent(event)
-        if hasattr(self,"layout_timer"):self.layout_timer.start()
+        if hasattr(self,"layout_timer") and not getattr(self,"_theme_changing",False):self.layout_timer.start()
     def reflow_page(self):
-        if not hasattr(self,"scroll"):return
+        if not hasattr(self,"scroll") or self._theme_changing:return
         w=self.scroll.widget()
         if w:
             theme.reflow(w.layout(),max(300,self.scroll.viewport().width()-24))
-            w.layout().invalidate();w.layout().activate();w.updateGeometry()
+            w.layout().activate()
+    def refresh_page_theme(self):
+        page=self.pages.get(self.page)
+        if page is None:return
+        # Do not repaint inactive cached pages or inactive workbenches on theme changes.
+        for p in page.findChildren(pg.PlotWidget):
+            if p.isVisibleTo(page):apply_plot_theme(p)
+        for w in page.findChildren(Orbit):w.update()
+        for table_widget in page.findChildren(Q.QTableWidget):
+            # Explicitly colored correlation cells require their own contrast.
+            if table_widget.property("correlationTable"):
+                for r in range(table_widget.rowCount()):
+                    for j in range(1,table_widget.columnCount()):
+                        item=table_widget.item(r,j)
+                        if item is not None and item.background().style()!=C.Qt.BrushStyle.NoBrush:
+                            item.setForeground(G.QColor(theme.contrasting_text(item.background().color().name())))
     def change_theme(self,text):
-        app=Q.QApplication.instance();theme.apply(app,STYLE,text.lower());C.QSettings("Robokks","IndustrialAnalyzer").setValue("theme",text.lower())
-        pg.setConfigOptions(background=theme.colors()["plot"],foreground=theme.colors()["text"])
-        for page in self.pages.values():
-            for p in page.findChildren(pg.PlotWidget):
-                p.setBackground(theme.colors()["plot"])
-                for a in ("left","bottom","right","top"):
-                    p.getAxis(a).setPen(pg.mkPen(theme.colors()["grid"]));p.getAxis(a).setTextPen(pg.mkPen(theme.colors()["axis"]))
-                if p.plotItem.legend is not None:
-                    legend=p.plotItem.legend
-                    if hasattr(legend,"setLabelTextColor"):legend.setLabelTextColor(theme.colors()["text"])
-                for item in p.listDataItems():
-                    pen=item.opts.get("pen")
-                    if pen is not None:
-                        pen=pg.mkPen(pen);name=pen.color().name()
-                        dark=PALETTE;light=["#087d98","#ae6006","#5656c0","#14845b","#c43f62","#8752a6","#286ab1","#a7780b"]
-                        mapping=dict(zip(dark,light)) if theme.MODE=="light" else dict(zip(light,dark))
-                        if name in mapping:pen.setColor(G.QColor(mapping[name]));item.setPen(pen)
-        self.layout_timer.start()
+        mode=text.lower()
+        if self._theme_changing or mode not in ("dark","light"):return
+        if theme.MODE==mode and Q.QApplication.instance().styleSheet():return
+        self._theme_changing=True;self.layout_timer.stop()
+        self.setUpdatesEnabled(False)
+        try:
+            app=Q.QApplication.instance();theme.apply(app,STYLE,mode)
+            pg.setConfigOptions(background=theme.colors()["plot"],foreground=theme.colors()["text"])
+            C.QSettings("Robokks","IndustrialAnalyzer").setValue("theme",mode)
+            self.refresh_page_theme()
+        finally:
+            self.setUpdatesEnabled(True);self._theme_changing=False;self.layout_timer.start()
     def eventFilter(self,obj,event):
         if event.type() in (C.QEvent.Type.MouseMove,C.QEvent.Type.KeyPress,C.QEvent.Type.MouseButtonPress):
             self.last_activity=time.monotonic()
@@ -245,7 +295,9 @@ class Desktop(LegacyApp):
             else:self.lock()
     def apply_role(self):
         self.userchip.setText(self.session.username+" · "+("Demo" if self.session.demo else self.session.role))
-        self.open_btn.setEnabled(self.session.allows("Open data files"))
+        self.open_btn.setEnabled(True)
+        self.open_btn.setText("Open data file" if self.session.allows("Open data files") else "Open data · Sign in")
+        self.open_btn.setToolTip("Select TDMS, TXT, CSV or Excel recordings." if self.session.allows("Open data files") else "Sign in or create a local administrator to import real recordings.")
         for i in (6,7):self.nav[i].setEnabled(self.session.allows("Advanced diagnostics"))
         self.account_btn.setText("     Access & Users" if self.session.allows("Manage users") else "     My Account")
     def permitted(self,key):
@@ -266,29 +318,38 @@ class Desktop(LegacyApp):
         self.pages.clear();self.dirty=set(range(9));self._data_identity=id(self.data);self._stats.clear();self.colors.clear()
     def selection_changed(self):
         self.dirty.update((0,1,2,5,8))
+    def ensure_access(self,key):
+        if self.permitted(key):return True
+        if self.session.demo:
+            dlg=Login(self.store,self,allow_demo=False)
+            dlg.setWindowTitle("Sign in to open real measurements")
+            result=dlg.exec()
+            self.theme_selector.blockSignals(True)
+            self.theme_selector.setCurrentText(theme.MODE.title())
+            self.theme_selector.blockSignals(False)
+            self.refresh_page_theme()
+            if result!=Q.QDialog.DialogCode.Accepted or dlg.session is None or dlg.session.demo:return False
+            self.session=dlg.session;self.apply_role();self.last_activity=time.monotonic()
+            # Clear cached controls constructed under demo permissions.
+            self.dirty.update(range(9));self.show_page(0)
+            if self.permitted(key):return True
+        Q.QMessageBox.information(self,"Access required",f"Your account does not have permission: {key}.")
+        return False
     def extended_tools(self):
-        import extra_ui as ex
-        menu=Q.QMenu(self)
-        entries=[
-            ("Open multiple recordings",lambda:ex.open_recordings(self),self.permitted("Open data files")),
-            ("Append recordings",lambda:ex.open_recordings(self,True),self.permitted("Open data files")),
-            ("Large TDMS range browser / streamed statistics",lambda:ex.range_browser(self),self.permitted("Open data files")),
-            ("Save workspace manifest",lambda:ex.save_workspace(self),self.permitted("Export data & reports")),
-            ("Restore workspace manifest",lambda:ex.restore_workspace(self),self.permitted("Open data files")),
-            ("Extended engineering workstation",lambda:ex.EngineeringDialog(self).exec(),self.permitted("Advanced diagnostics") and self.permitted("Modify analysis settings")),
-            ("Independent-axis graph studio",lambda:ex.graph_studio(self),self.permitted("View trends & statistics")),
-            ("Align / split / merge recordings",lambda:ex.recording_editor(self),self.permitted("Modify analysis settings")),
-            ("Speed-torque efficiency map",lambda:ex.operating_map(self),self.permitted("Modify analysis settings") and self.permitted("Advanced diagnostics")),
-            ("Batch statistical report",lambda:ex.batch_summary(self),self.permitted("Open data files") and self.permitted("Export data & reports")),
-            ("LabVIEW local TCP / UDP capture",lambda:ex.capture_dialog(self),self.permitted("Open data files") and self.permitted("Modify analysis settings")),
-            ("Export all-channel statistical summary",lambda:self.do_export(["Channel","Unit","Samples","Min","Max","Mean","RMS"],((c.name,c.unit,len(c.y),d.get("Min"),d.get("Max"),d.get("Mean"),d.get("RMS")) for c in self.data for d in [describe(c.y)])),self.permitted("Export data & reports")),
-        ]
-        for name,callback,allowed in entries:
-            a=menu.addAction(name);a.setEnabled(allowed);a.triggered.connect(lambda checked=False,callback=callback:callback())
-        menu.exec(self.extra_btn.mapToGlobal(C.QPoint(0,self.extra_btn.height())))
+        try:
+            import extra_ui as ex
+            ex.open_tool_catalog(self)
+        except Exception as exc:
+            logging.exception("Extended tools failed")
+            Q.QMessageBox.warning(self,"Extended tools",str(exc))
     def open_file(self):
-        from extra_ui import open_recordings
-        open_recordings(self)
+        try:
+            if not self.ensure_access("Open data files"):return
+            from extra_ui import open_recordings
+            open_recordings(self)
+        except Exception as exc:
+            logging.exception("Open data failed")
+            Q.QMessageBox.warning(self,"Open data",str(exc))
     def reset(self):
         self.recordings=[];self.file_channel_count=0;self.data=reference_demo();self.source="Telegram_Demo_100_Parameters";self.selected=set(range(4));self.show_page(self.page)
     def do_export(self,headers,rows):
@@ -315,7 +376,7 @@ class Desktop(LegacyApp):
             if i in self.pages:self.pages[i].deleteLater()
             w=Q.QWidget();w.setObjectName("page");v=Q.QVBoxLayout(w);v.setContentsMargins(0,0,2,25);v.setSpacing(17)
             [self.overview,self.explorer,self.trends,self.statistics,self.thresholds,self.comparison,self.engineering,self.advanced,self.reports][i](v);v.addStretch();self.pages[i]=w;self.dirty.discard(i)
-        self.scroll.setWidget(self.pages[i]);self.reflow_page();self.layout_timer.start();self.scroll.verticalScrollBar().setValue(0);self.audit("Navigate",PAGES[i])
+        self.scroll.setWidget(self.pages[i]);self.refresh_page_theme();self.reflow_page();self.layout_timer.start();self.scroll.verticalScrollBar().setValue(0);self.audit("Navigate",PAGES[i])
     def span(self):
         if not all(c.time_unit=="s" for c in self.data):return "Sample index"
         return f"{max((c.t[-1]-c.t[0] for c in self.data if len(c.t)),default=0):.3f} s"
@@ -413,7 +474,7 @@ class Desktop(LegacyApp):
         wb,lb=frame();v.addWidget(wb);lb.addWidget(label("PANEL B / ADDITIONAL SIGNALS","micro"));card_title(lb,"Secondary signal trends");p2=plot(355);lb.addWidget(p2);read2=label("Hover over this graph to inspect secondary signals.","status");lb.addWidget(read2);p2.setXLink(p1)
         measurements=table_card(v,"A/B Cursor Measurements — panel A",["Signal","Unit","Δ time / samples","A value","B value","Δ value"],[],160)
         measurements.parentWidget().hide()
-        cursor_lines=[pg.InfiniteLine(angle=90,movable=True,pen=pg.mkPen("#ffbe67",width=2),label="A"),pg.InfiniteLine(angle=90,movable=True,pen=pg.mkPen("#58e0e0",width=2),label="B")]
+        cursor_lines=[pg.InfiniteLine(angle=90,movable=True,pen=pg.mkPen(theme.trace_color("#ffbe67"),width=2),label="A",labelOpts={"color":theme.colors()["text"]}),pg.InfiniteLine(angle=90,movable=True,pen=pg.mkPen(theme.trace_color("#58e0e0"),width=2),label="B",labelOpts={"color":theme.colors()["text"]})]
         tw,tl=frame();v.addWidget(tw);tl.addWidget(label("TRACE MANAGEMENT","micro"));card_title(tl,"Active channels & signal ranges");tt=table([],[]);tt.setMinimumHeight(200);tl.addWidget(tt)
         def ids():return sorted(self.selected)[:12]
         def redraw(*_):
@@ -477,7 +538,7 @@ class Desktop(LegacyApp):
         def trace_table():
             ss=sorted(self.selected);fill(tt,["Signal","Color","Minimum","Maximum","Action"],[[self.data[i].name,"",self.stats_for(i).get("Min","—"),self.stats_for(i).get("Max","—"),""] for i in ss])
             for j,i in enumerate(ss[:10000]):
-                b=btn("Color",lambda checked=False,i=i:color(i));b.setStyleSheet("background:"+self.colors.get(i,PALETTE[j%len(PALETTE)])+";color:#081321;");tt.setCellWidget(j,1,b);tt.setCellWidget(j,4,btn("Remove",lambda checked=False,i=i:remove(i)))
+                b=btn("Color",lambda checked=False,i=i:color(i));swatch=self.colors.get(i,PALETTE[j%len(PALETTE)]);b.setStyleSheet("background:"+swatch+";color:"+theme.contrasting_text(swatch)+";");tt.setCellWidget(j,1,b);tt.setCellWidget(j,4,btn("Remove",lambda checked=False,i=i:remove(i)))
         def cursor(p,out,second):
             def move(point):
                 if not p.getPlotItem().sceneBoundingRect().contains(point):return
@@ -499,6 +560,7 @@ class Desktop(LegacyApp):
             # QStackedWidget normally sizes to its largest child; size to selected pane.
             for j,w in enumerate(pages):w.setSizePolicy(Q.QSizePolicy.Policy.Preferred if j==i else Q.QSizePolicy.Policy.Ignored,Q.QSizePolicy.Policy.Preferred if j==i else Q.QSizePolicy.Policy.Ignored)
             theme.reflow(pages[i].layout(),max(300,self.scroll.viewport().width()-32));stack.updateGeometry()
+            self.refresh_page_theme()
             self.layout_timer.start()
         for i,n in enumerate(names):
             b=btn(n,lambda checked=False,i=i:activate(i),"tab");b.setCheckable(True);bar.addWidget(b,i//columns,i%columns);buttons.append(b);w=factory(n);pages.append(w);stack.addWidget(w)
@@ -574,7 +636,7 @@ class Desktop(LegacyApp):
                 for n,k in zip(nums,("Pearson r","Slope","R squared")):n.setText(fmt(m[k]))
                 status.setText("Matched time bases. Correlation describes association, not causation.")
             except ValueError as exc:p.clear();status.setText(str(exc))
-        w,l=frame();v.addWidget(w);top=row();l.addLayout(top);top.addWidget(label("Multi-Channel Correlation Matrix","section"),1);n=combo(["4","6","8"],1);top.addWidget(n);last=[[],[]];top.addWidget(btn("Calculate matrix",lambda:matrix(),"primary"));top.addWidget(btn("Export matrix CSV",lambda:self.do_export(*last)));mt=table([],[]);mt.setMinimumHeight(260);l.addWidget(mt);l.addWidget(label("Pairwise Pearson correlation uses aligned finite samples. Mismatched time bases are not automatically resampled.","sub"))
+        w,l=frame();v.addWidget(w);top=row();l.addLayout(top);top.addWidget(label("Multi-Channel Correlation Matrix","section"),1);n=combo(["4","6","8"],1);top.addWidget(n);last=[[],[]];top.addWidget(btn("Calculate matrix",lambda:matrix(),"primary"));top.addWidget(btn("Export matrix CSV",lambda:self.do_export(*last)));mt=table([],[]);mt.setProperty("correlationTable",True);mt.setMinimumHeight(260);l.addWidget(mt);l.addWidget(label("Pairwise Pearson correlation uses aligned finite samples. Mismatched time bases are not automatically resampled.","sub"))
         def matrix():
             ids=sorted(self.selected)[:int(n.currentText())];headers=["Channel"]+[self.data[i].name for i in ids];rows=[]
             for i in ids:
@@ -588,7 +650,7 @@ class Desktop(LegacyApp):
             for i,rr in enumerate(rows):
                 for j,value in enumerate(rr[1:],1):
                     if np.isfinite(value):
-                        color=G.QColor.fromHsvF(.48 if value>=0 else .03,min(abs(value),1),.27+min(abs(value),1)*.25);mt.item(i,j).setBackground(color)
+                        color=G.QColor.fromHsvF(.48 if value>=0 else .03,min(abs(value),1),.27+min(abs(value),1)*.25);mt.item(i,j).setBackground(color);mt.item(i,j).setForeground(G.QColor(theme.contrasting_text(color.name())))
         run();matrix()
     def engineering(self,v):
         w,l=frame("hero",26);v.addWidget(w);l.addWidget(label("WORKSPACE 09 / INDUSTRIAL INVESTIGATION","micro"));l.addWidget(label("Engineering Analysis Lab   ·   V9 / 5 WORKBENCHES","heading"));l.addWidget(label("One integrated investigation environment: distributions and outliers, process capability, operating states, signal relationships and rolling stability.","sub"));self.tabs(v,LAB,lambda name:AnalysisPane(self,name),5)
@@ -724,7 +786,7 @@ class AnalysisPane(Q.QWidget):
             if tool=="Distribution":
                 factor=vals[1];q1=d["Q1"];q3=d["Q3"];iqr=d["IQR"];lo=q1-factor*iqr;hi=q3+factor*iqr;inside=good[(good>=lo)&(good<=hi)];out=good[(good<lo)|(good>hi)];low=inside.min();high=inside.max();med=d["Median"]
                 # Actual box-and-whisker geometry, not a second line chart.
-                p=self.plots[1];draw(self.plots[0],curves[:1]);p.clear();p.addItem(pg.BarGraphItem(x=[1],y0=[q1],height=[q3-q1],width=.45,brush="#245a70",pen=pg.mkPen("#58e0e0")));p.plot([1,1],[low,q1],pen="#58e0e0");p.plot([1,1],[q3,high],pen="#58e0e0");p.plot([.75,1.25],[med,med],pen=pg.mkPen("#ffbe67",width=2));p.plot([.87,1.13],[low,low],pen="#58e0e0");p.plot([.87,1.13],[high,high],pen="#58e0e0");p.plot(np.ones(len(out)),out,pen=None,symbol="o",symbolBrush="#ff7588");p.setXRange(.5,1.5);p.enableAutoRange(axis="y");m.update({"IQR outliers":len(out)});rows=list(d.items())+[("Lower fence",lo),("Upper fence",hi),("Outlier count",len(out))];self.headers=["Measure","Value"];groups=[]
+                p=self.plots[1];draw(self.plots[0],curves[:1]);p.clear();p.addItem(pg.BarGraphItem(x=[1],y0=[q1],height=[q3-q1],width=.45,brush=theme.trace_color("#245a70"),pen=pg.mkPen(theme.trace_color("#58e0e0"))));p.plot([1,1],[low,q1],pen=theme.trace_color("#58e0e0"));p.plot([1,1],[q3,high],pen=theme.trace_color("#58e0e0"));p.plot([.75,1.25],[med,med],pen=pg.mkPen(theme.trace_color("#ffbe67"),width=2));p.plot([.87,1.13],[low,low],pen=theme.trace_color("#58e0e0"));p.plot([.87,1.13],[high,high],pen=theme.trace_color("#58e0e0"));p.plot(np.ones(len(out)),out,pen=None,symbol="o",symbolBrush=theme.trace_color("#ff7588"));p.setXRange(.5,1.5);p.enableAutoRange(axis="y");m.update({"IQR outliers":len(out)});rows=list(d.items())+[("Lower fence",lo),("Upper fence",hi),("Outlier count",len(out))];self.headers=["Measure","Value"];groups=[]
             elif tool=="Process Capability":
                 lo,hi,target=vals;h,e=np.histogram(good,bins=24);groups=[[((e[:-1]+e[1:])/2,h,"Histogram")],curves];mr=np.abs(np.diff(y));mr=mr[np.isfinite(mr)];sigma=mr.mean()/1.128 if len(mr) else np.nan;overall=d["Std Dev"];mu=d["Mean"];m.update({"Cp":(hi-lo)/(6*sigma) if sigma>0 else np.nan,"Cpk":min(hi-mu,mu-lo)/(3*sigma) if sigma>0 else np.nan,"Pp":(hi-lo)/(6*overall) if overall>0 else np.nan,"Ppk":min(hi-mu,mu-lo)/(3*overall) if overall>0 else np.nan});rows=list(m.items())+[("Within sigma (MR/1.128)",sigma),("Overall sigma",overall),("Target",target)];self.headers=["Indicator","Result"]
             elif tool=="State & Events":
@@ -761,9 +823,20 @@ class AnalysisPane(Q.QWidget):
             self.show_metrics({});fill(self.tbl,[],[]);self.status.setText("Analysis not completed: "+str(exc))
 
 def run():
+    if len(sys.argv)==3 and sys.argv[1]=="--self-test":
+        from release_smoke import run_smoke
+        return run_smoke(Path(sys.argv[2]))
     app=Q.QApplication(sys.argv);app.setApplicationName("IndustrialAnalyzer");app.setOrganizationName("Robokks");theme.apply(app,STYLE,C.QSettings("Robokks","IndustrialAnalyzer").value("theme","dark") if C.QSettings("Robokks","IndustrialAnalyzer").value("theme","dark") in ("dark","light") else "dark")
     directory=C.QStandardPaths.writableLocation(C.QStandardPaths.StandardLocation.AppLocalDataLocation)
-    store=AccessStore(Path(directory)/"accounts.sqlite3")
+    root=Path(directory);root.mkdir(parents=True,exist_ok=True)
+    from logging.handlers import RotatingFileHandler
+    handler=RotatingFileHandler(root/"analyzer.log",maxBytes=1_000_000,backupCount=2,encoding="utf-8")
+    logging.basicConfig(level=logging.INFO,handlers=[handler])
+    def exception_hook(kind,value,tb):
+        logging.error("Unhandled UI error",exc_info=(kind,value,tb))
+        Q.QMessageBox.critical(None,"Industrial Analyzer",f"{kind.__name__}: {value}\n\nDiagnostic log: {root / 'analyzer.log'}")
+    sys.excepthook=exception_hook
+    store=AccessStore(root/"accounts.sqlite3")
     try:
         dlg=Login(store)
         if dlg.exec()!=Q.QDialog.DialogCode.Accepted:return 0
