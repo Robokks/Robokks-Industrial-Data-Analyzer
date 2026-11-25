@@ -239,6 +239,8 @@ class Desktop(LegacyApp):
             ("Restore workspace manifest",lambda:ex.restore_workspace(self),self.permitted("Open data files")),
             ("Extended engineering workstation",lambda:ex.EngineeringDialog(self).exec(),self.permitted("Advanced diagnostics") and self.permitted("Modify analysis settings")),
             ("Independent-axis graph studio",lambda:ex.graph_studio(self),self.permitted("View trends & statistics")),
+            ("Align / split / merge recordings",lambda:ex.recording_editor(self),self.permitted("Modify analysis settings")),
+            ("Speed-torque efficiency map",lambda:ex.operating_map(self),self.permitted("Modify analysis settings") and self.permitted("Advanced diagnostics")),
             ("Batch statistical report",lambda:ex.batch_summary(self),self.permitted("Open data files") and self.permitted("Export data & reports")),
             ("LabVIEW local TCP / UDP capture",lambda:ex.capture_dialog(self),self.permitted("Open data files") and self.permitted("Modify analysis settings")),
             ("Export all-channel statistical summary",lambda:self.do_export(["Channel","Unit","Samples","Min","Max","Mean","RMS"],((c.name,c.unit,len(c.y),d.get("Min"),d.get("Max"),d.get("Mean"),d.get("RMS")) for c in self.data for d in [describe(c.y)])),self.permitted("Export data & reports")),

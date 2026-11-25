@@ -8,7 +8,7 @@ set "PY=.venv\Scripts\python.exe"
 if errorlevel 1 exit /b 1
 %PY% -m pytest -q
 if errorlevel 1 exit /b 1
-%PY% -m bandit main.py engine.py safe_export.py v12_ui.py access.py performance.py engineering_tools.py data_workspace.py live_capture.py extra_ui.py
+%PY% -m bandit main.py engine.py safe_export.py v12_ui.py access.py performance.py engineering_tools.py data_workspace.py live_capture.py extra_ui.py recording_ops.py
 if errorlevel 1 exit /b 1
 %PY% -m pip_audit
 if errorlevel 1 exit /b 1

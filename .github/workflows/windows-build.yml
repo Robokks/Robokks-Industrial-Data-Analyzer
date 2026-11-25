@@ -1,6 +1,15 @@
-name: Windows analyzer build
+name: Windows validation and approved EXE
 on:
   workflow_dispatch:
+    inputs:
+      package:
+        description: 'Package EXE after screenshot review'
+        type: boolean
+        default: false
+      reviewed_sha:
+        description: 'Full commit SHA of the reviewed screenshot run'
+        type: string
+        required: false
   push:
     paths:
       - '**.py'
@@ -8,6 +17,7 @@ on:
       - '**.rs'
       - '**/requirements.txt'
       - '**/build_windows.bat'
+      - '.github/workflows/windows-build.yml'
 permissions:
   contents: read
 jobs:
@@ -17,6 +27,13 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
+      - name: Require exact reviewed revision before packaging
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.package }}
+        shell: pwsh
+        env:
+          REVIEWED_SHA: ${{ inputs.reviewed_sha }}
+        run: |
+          if ($env:REVIEWED_SHA -cne $env:GITHUB_SHA) { throw "Reviewed commit SHA must match the checked-out revision" }
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -50,18 +67,41 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           [xml]$report = Get-Content tests.xml
           if (@($report.testsuites.testsuite | Where-Object { [int]$_.skipped -gt 0 }).Count) { throw "Skipped tests block packaging" }
+      - name: GUI scaling checks (125% and 150%)
+        shell: pwsh
+        run: |
+          Set-Location $env:PROJECT
+          foreach ($scale in @("1.25","1.5")) {
+            $env:QT_SCALE_FACTOR=$scale
+            python -m pytest -q tests/test_v12_ui.py::test_native_reference_screens --junitxml="scale-$scale.xml"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $dest="ui_review_scaled/$scale"
+            New-Item -ItemType Directory -Force $dest | Out-Null
+            Copy-Item ui_review/*.png $dest
+          }
       - name: Upload native UI review screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: V12-native-UI-review
-          path: ${{ env.PROJECT }}/ui_review/
+          path: |
+            ${{ env.PROJECT }}/ui_review/
+            ${{ env.PROJECT }}/ui_review_scaled/
+          if-no-files-found: warn
+      - name: Upload functional requirement test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Functional-requirement-test-results
+          path: |
+            ${{ env.PROJECT }}/tests.xml
+            ${{ env.PROJECT }}/scale-*.xml
           if-no-files-found: warn
       - name: Security gates
         shell: pwsh
         run: |
           Set-Location $env:PROJECT
-          python -m bandit main.py engine.py safe_export.py v12_ui.py access.py performance.py engineering_tools.py data_workspace.py live_capture.py extra_ui.py
+          python -m bandit main.py engine.py safe_export.py v12_ui.py access.py performance.py engineering_tools.py data_workspace.py live_capture.py extra_ui.py recording_ops.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pip_audit
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
@@ -71,6 +111,7 @@ jobs:
           cargo audit
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Package
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.package }}
         shell: pwsh
         run: |
           Set-Location $env:PROJECT
@@ -83,6 +124,7 @@ jobs:
           if ($p.HasExited) { throw "Packaged application exited during startup: $($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
       - uses: actions/upload-artifact@v4
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.package }}
         with:
           name: IndustrialAnalyzer-Windows-x64
           path: ${{ env.PROJECT }}/dist/IndustrialAnalyzer/

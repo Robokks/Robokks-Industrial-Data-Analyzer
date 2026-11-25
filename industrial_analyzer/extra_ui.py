@@ -11,6 +11,7 @@ from safe_export import export_table
 import data_workspace as dw
 import engineering_tools as et
 import live_capture
+import recording_ops as ro
 
 def ui():
     import v12_ui
@@ -369,3 +370,53 @@ def batch_summary(app):
             export_table(path,["Recording","Channel","Unit","Valid","Min","Max","Mean","RMS","Sample SD"],rows())
         job(app,"Batch statistical report",calculate);app.audit("Batch summary exported")
     except Exception as exc:warn(app,"Batch report",exc)
+
+
+def recording_editor(app):
+    """Explicit alignment and bounded merge/split of channels, without altering source files."""
+    if not app.permitted("Modify analysis settings"):return
+    d=Q.QDialog(app);d.setWindowTitle("Recording alignment / merge / split");d.resize(1000,570);l=Q.QVBoxLayout(d)
+    l.addWidget(ui().label("Recording operations","heading"))
+    l.addWidget(ui().label("Create new channels only. For alignment, explicitly confirm the offset (added to B time). No automatic synchronization or anti-alias downsampling.","status"))
+    r=Q.QHBoxLayout();l.addLayout(r);a=ui().field(r,"CHANNEL A",ui().combo(app.names()));b=ui().field(r,"CHANNEL B",ui().combo(app.names(),1))
+    rr=Q.QHBoxLayout();l.addLayout(rr);offset=ui().field(rr,"B CLOCK OFFSET (seconds)",ui().number(0));index=ui().field(rr,"SPLIT A AT SAMPLE INDEX",ui().number(1,1,dw.MAX_SAMPLES,1,True))
+    status=ui().label("","status");l.addWidget(status)
+    def apply(kind):
+        try:
+            x=app.data[a.currentIndex()];y=app.data[b.currentIndex()]
+            if kind=="align":
+                if Q.QMessageBox.question(d,"Confirm alignment","The entered offset is an operator assumption, not verified hardware synchronization. Continue?")!=Q.QMessageBox.StandardButton.Yes:return
+                added=job(app,"Align recordings",lambda stop:ro.align_recordings(x,y,offset_value))
+            elif kind=="split":added=ro.split_channel(x,int(index.value()))
+            else:added=[ro.concatenate_channels(x,y)]
+            if len(app.data)+len(added)>dw.MAX_CHANNELS or sum(len(c.y) for c in [*app.data,*added])>dw.MAX_SAMPLES:raise ValueError("Working set limit exceeded")
+            names=set(app.names())
+            for c in added:
+                base=c.name;k=2
+                while c.name in names:c.name=f"{base} [{k}]";k+=1
+                names.add(c.name)
+            original=len(app.data);app.data=[*app.data,*added];app.selected=set(range(original,len(app.data)));app.dataset_changed();app.show_page(2);app.audit("Recording operation",kind);d.accept()
+        except Exception as exc:status.setText(str(exc))
+    def align():
+        nonlocal offset_value
+        offset_value=offset.value();apply("align")
+    offset_value=0.
+    r=Q.QHBoxLayout();l.addLayout(r)
+    r.addWidget(ui().btn("Align overlapping recordings",align,"primary"));r.addWidget(ui().btn("Split channel A",lambda:apply("split")));r.addWidget(ui().btn("Merge A then B",lambda:apply("merge")));r.addWidget(ui().btn("Close",d.accept));l.addStretch();d.exec()
+
+def operating_map(app):
+    if not app.permitted("Modify analysis settings"):return
+    d=Q.QDialog(app);d.setWindowTitle("Efficiency operating map");d.resize(1200,820);l=Q.QVBoxLayout(d);l.addWidget(ui().label("Speed × Torque · power-weighted efficiency","heading"))
+    rr=Q.QHBoxLayout();l.addLayout(rr);selectors=[ui().field(rr,n,ui().combo(app.names(),i)) for i,n in enumerate(("Speed rpm","Torque Nm","Input kW","Output kW"))]
+    rr=Q.QHBoxLayout();l.addLayout(rr);bins=ui().field(rr,"Bins per axis",ui().number(16,2,64,1,True));minimum=ui().field(rr,"Minimum input kW",ui().number(.01,.0001,1e9,.01));count=ui().field(rr,"Minimum samples per bin",ui().number(3,1,100000,1,True))
+    p=ui().plot(460);l.addWidget(p,1);p.setLabel("left","Torque",units="Nm");p.setLabel("bottom","Speed",units="rpm")
+    status=ui().label("Select calibrated inputs. Positive motoring flow only; each occupied cell is 100 × sum(output kW) / sum(input kW). Values above 100% are not clipped.","status");l.addWidget(status);last=[]
+    def run():
+        try:
+            cs=[app.data[x.currentIndex()] for x in selectors];n=int(bins.value());m=minimum.value();k=int(count.value())
+            xe,ye,z,counts=job(app,"Operating map",lambda stop:ro.efficiency_map(*cs,n,m,k));p.clear();last.clear()
+            img=pg.ImageItem(z.T,axisOrder="row-major");p.addItem(img);img.setRect(C.QRectF(xe[0],ye[0],xe[-1]-xe[0],ye[-1]-ye[0]));img.setLevels((0,100));img.setLookupTable(pg.colormap.get("viridis").getLookupTable());p.enableAutoRange()
+            last.extend((xe[i],xe[i+1],ye[j],ye[j+1],int(counts[i,j]),z[i,j]) for i in range(len(xe)-1) for j in range(len(ye)-1))
+            status.setText(f"{np.isfinite(z).sum()} populated bins · display color scale 0–100%; exported results retain actual values.")
+        except Exception as exc:status.setText(str(exc));p.clear();last.clear()
+    bar=Q.QHBoxLayout();l.addLayout(bar);bar.addWidget(ui().btn("Calculate map",run,"primary"));bar.addWidget(ui().btn("Export bins CSV / Excel",lambda:app.do_export(["RPM low","RPM high","Nm low","Nm high","Count","Efficiency %"],last) if last else None));bar.addWidget(ui().btn("Close",d.accept));d.exec()
