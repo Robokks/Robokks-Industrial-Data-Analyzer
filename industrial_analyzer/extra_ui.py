@@ -60,7 +60,7 @@ def warn(app,title,exc):
         Q.QMessageBox.warning(app,title,str(exc))
 
 def install_data(app,channels,specs=None,selection=None,colors=None):
-    app.data=channels;app.recordings=list(specs or []);app.source=f"{len(app.recordings)} recording(s)" if app.recordings else "Derived / captured data"
+    app.data=channels;app.recordings=list(specs or []);app.source=(f"{len(app.recordings)} recording(s) · selected TDMS ranges" if any(x.get("range") is not None or x.get("ranges") is not None for x in app.recordings) else f"{len(app.recordings)} recording(s)") if app.recordings else "Derived / captured data"
     app.selected=set(range(min(4,len(channels)))) if selection is None else {i for i in selection if 0<=i<len(channels)}
     app.dataset_changed()
     if colors:app.colors={int(k):v for k,v in colors.items() if int(k)<len(channels)}
@@ -100,42 +100,108 @@ def open_recordings(app,append=False):
             if not app.recordings:raise ValueError("Append requires an existing file-backed workspace; open recordings first")
             if len(app.data)!=getattr(app,"file_channel_count",len(app.data)):raise ValueError("Save/export derived channels before appending files")
             specs=app.recordings+specs
-        data=job(app,"Import recordings",lambda stop:dw.load_workspace(specs,stop))
+        # Keep the old workspace unchanged until the full import plan succeeds.
+        while True:
+            try:
+                data=job(app,"Import recordings",lambda stop:dw.load_workspace(specs,stop))
+                break
+            except dw.TdmsRangeRequired as exc:
+                if exc.sample_budget<1 or exc.channel_budget<1:
+                    raise ValueError("No remaining working-set capacity. Open fewer recordings or select smaller ranges.")
+                spec=choose_tdms_ranges(app,exc.path,exc.sample_budget,exc.channel_budget)
+                if spec is None:return
+                index=next((i for i,item in enumerate(specs) if str(Path(item["path"]).resolve())==exc.path and item.get("range") is None and item.get("ranges") is None),None)
+                if index is None:raise
+                specs[index]=spec
         if not app.permitted("Open data files"):return
         install_data(app,data,specs);app.file_channel_count=len(data);app.audit("Recordings imported",str(len(specs)))
     except Exception as exc:warn(app,"Import",exc)
+
+def choose_tdms_ranges(app,path,sample_budget=None,channel_budget=None):
+    """One native dialog for automatic fallback and manual large-file browsing."""
+    sample_budget=dw.MAX_SAMPLES if sample_budget is None else sample_budget
+    channel_budget=dw.MAX_CHANNELS if channel_budget is None else channel_budget
+    path=str(Path(path).resolve())
+    meta=job(app,"Read TDMS metadata",lambda stop:dw.catalog(path))
+    if not meta:Q.QMessageBox.information(app,"TDMS","No numeric channels");return None
+    d=Q.QDialog(app);d.resize(1060,740);d.setMinimumSize(720,550);d.setWindowTitle("Large TDMS · Select channels and range")
+    l=Q.QVBoxLayout(d);l.addWidget(ui().label("Large TDMS recording","heading"))
+    l.addWidget(ui().label(Path(path).name,"section"))
+    l.addWidget(ui().label(f"{len(meta):,} numeric channels · {sum(x[2] for x in meta):,} source values · {Path(path).stat().st_size/1024**2:,.1f} MiB","sub"))
+    l.addWidget(ui().label("This recording exceeds the full-import budget or was opened in range mode. Select channels and a common sample interval. Original files remain unchanged. Analysis uses only the loaded samples; full-channel statistics are available separately.","status"))
+    tree=Q.QTreeWidget();tree.setObjectName("tdmsRangeTree");tree.setHeaderLabels(["Group / Channel","Samples","Unit","Type"])
+    tree.setSelectionMode(Q.QAbstractItemView.SelectionMode.ExtendedSelection);l.addWidget(tree,1);groups={};items=[]
+    for i,(group,name,n,unit,dtype) in enumerate(meta):
+        if group not in groups:groups[group]=Q.QTreeWidgetItem(tree,[group]);groups[group].setFlags(groups[group].flags() & ~C.Qt.ItemFlag.ItemIsSelectable)
+        it=Q.QTreeWidgetItem(groups[group],[name,f"{n:,}",unit,dtype]);it.setData(0,C.Qt.ItemDataRole.UserRole,i)
+        it.setFlags(it.flags() | C.Qt.ItemFlag.ItemIsUserCheckable);it.setCheckState(0,C.Qt.CheckState.Unchecked);items.append(it)
+    tree.expandAll();tree.setColumnWidth(0,350)
+    selection=Q.QHBoxLayout();l.addLayout(selection)
+    def check_all(state):
+        tree.blockSignals(True)
+        try:
+            for it in items:it.setCheckState(0,state)
+        finally:tree.blockSignals(False)
+        update_selection()
+    selection.addWidget(ui().btn("Select all channels",lambda:check_all(C.Qt.CheckState.Checked)))
+    selection.addWidget(ui().btn("Clear selection",lambda:check_all(C.Qt.CheckState.Unchecked)))
+    selection.addStretch(1)
+    limits=Q.QHBoxLayout();l.addLayout(limits);a=Q.QLineEdit("0");b=Q.QLineEdit(str(min(10000,meta[0][2],sample_budget)))
+    a.setObjectName("tdmsStartSample");b.setObjectName("tdmsStopSample")
+    ui().field(limits,"START (inclusive)",a);ui().field(limits,"STOP (exclusive)",b)
+    summary=ui().label("","status");summary.setObjectName("tdmsRangeSummary");l.addWidget(summary)
+    result=[];load_btn=ui().btn("Load selected channels",lambda:accept_ranges(),"primary");load_btn.setObjectName("tdmsLoadRanges")
+    def selected():return [meta[i] for i,it in enumerate(items) if it.checkState(0)==C.Qt.CheckState.Checked]
+    def planned():
+        sel=selected();start=int(a.text());stop=int(b.text())
+        ranges=[[g,n,start,stop] for g,n,*_ in sel]
+        values=dw.validate_ranges(ranges,sample_budget,channel_budget)
+        if any(stop>n for _,_,n,*_ in sel):raise ValueError("Stop sample exceeds a selected channel's length.")
+        return ranges,values
+    def update_selection(*args):
+        try:
+            ranges,values=planned()
+            summary.setText(f"{len(ranges)} channels × {ranges[0][3]-ranges[0][2]:,} samples = {values:,} values. Budget: {sample_budget:,} values / {channel_budget} channels.")
+            load_btn.setEnabled(True)
+        except (ValueError,TypeError) as exc:
+            summary.setText(f"{len(selected())} selected. {exc}");load_btn.setEnabled(False)
+    def fit_range():
+        sel=selected()
+        if not sel:return
+        try:start=max(0,int(a.text()))
+        except ValueError:start=0
+        end=min(min(x[2] for x in sel),start+sample_budget//len(sel))
+        a.setText(str(start));b.setText(str(end));update_selection()
+    selection.addWidget(ui().btn("Fit range to memory",fit_range))
+    def accept_ranges():
+        try:
+            ranges,_=planned();result.append({"path":path,"ranges":ranges});d.accept()
+        except (ValueError,TypeError) as exc:summary.setText(str(exc))
+    def stats():
+        try:
+            it=tree.currentItem()
+            if it is None or it.data(0,C.Qt.ItemDataRole.UserRole) is None:raise ValueError("Highlight a numeric channel for full-channel statistics")
+            group,name,*_=meta[it.data(0,C.Qt.ItemDataRole.UserRole)]
+            m=job(app,"Stream full-channel statistics",lambda stop:dw.stream_stats(path,group,name,stop))
+            summary.setText(f"{group}/{name} — full channel: "+"  ·  ".join(f"{k}: {ui().fmt(v)}" for k,v in m.items()))
+        except Exception as exc:warn(d,"TDMS statistics",exc)
+    buttons=Q.QHBoxLayout();l.addLayout(buttons);buttons.addWidget(ui().btn("Full-channel statistics",stats));buttons.addStretch(1);buttons.addWidget(load_btn);buttons.addWidget(ui().btn("Cancel",d.reject))
+    tree.itemChanged.connect(update_selection);a.textChanged.connect(update_selection);b.textChanged.connect(update_selection)
+    items[0].setCheckState(0,C.Qt.CheckState.Checked);tree.setCurrentItem(items[0]);update_selection()
+    if d.exec()==Q.QDialog.DialogCode.Accepted and result:return result[0]
+    return None
 
 def range_browser(app):
     if not app.permitted("Open data files"):return
     path,_=Q.QFileDialog.getOpenFileName(app,"Browse large TDMS recording","","TDMS (*.tdms)",options=Q.QFileDialog.Option.DontUseNativeDialog)
     if not path:return
-    try:meta=job(app,"Read TDMS metadata",lambda stop:dw.catalog(path))
-    except Exception as exc:warn(app,"TDMS metadata",exc);return
-    if not meta:Q.QMessageBox.information(app,"TDMS","No numeric channels");return
-    d=Q.QDialog(app);d.resize(950,640);d.setWindowTitle("TDMS group / channel browser");l=Q.QVBoxLayout(d);l.addWidget(ui().label("TDMS range & streaming analysis","heading"));l.addWidget(ui().label("Browse metadata without importing all samples. Select a channel and either calculate whole-channel streaming statistics or load a bounded sample range.","sub"))
-    tree=Q.QTreeWidget();tree.setHeaderLabels(["Group / Channel","Samples","Unit","Type"]);l.addWidget(tree,1);groups={}
-    for i,(group,name,n,unit,dtype) in enumerate(meta):
-        if group not in groups:groups[group]=Q.QTreeWidgetItem(tree,[group])
-        it=Q.QTreeWidgetItem(groups[group],[name,str(n),unit,dtype]);it.setData(0,C.Qt.ItemDataRole.UserRole,i)
-    tree.expandAll()
-    limits=Q.QHBoxLayout();l.addLayout(limits);a=Q.QLineEdit("0");b=Q.QLineEdit("10000");ui().field(limits,"START (inclusive)",a);ui().field(limits,"STOP (exclusive)",b)
-    summary=ui().label("Select a numeric channel.","status");l.addWidget(summary)
-    def chosen():
-        it=tree.currentItem()
-        if it is None or it.data(0,C.Qt.ItemDataRole.UserRole) is None:raise ValueError("Select a numeric channel")
-        return meta[it.data(0,C.Qt.ItemDataRole.UserRole)]
-    def stats():
-        try:
-            group,name,*_=chosen();m=job(app,"Stream full-channel statistics",lambda stop:dw.stream_stats(path,group,name,stop));summary.setText("  ·  ".join(f"{k}: {ui().fmt(v)}" for k,v in m.items()))
-        except Exception as exc:warn(d,"TDMS statistics",exc)
-    def load_range():
-        try:
-            group,name,*_=chosen();spec={"path":str(Path(path).resolve()),"range":[group,name,int(a.text()),int(b.text())]}
-            data=job(app,"Load selected sample range",lambda stop:dw.load_workspace([spec],stop))
-            if not app.permitted("Open data files"):return
-            install_data(app,data,[spec]);app.file_channel_count=len(data);app.audit("TDMS range imported");d.accept()
-        except Exception as exc:warn(d,"TDMS range",exc)
-    row=Q.QHBoxLayout();l.addLayout(row);row.addWidget(ui().btn("Calculate full-channel statistics",stats));row.addWidget(ui().btn("Load selected range",load_range,"primary"));row.addWidget(ui().btn("Close",d.accept));d.exec()
+    try:
+        spec=choose_tdms_ranges(app,path)
+        if spec is None:return
+        data=job(app,"Load selected TDMS ranges",lambda stop:dw.load_workspace([spec],stop))
+        if not app.permitted("Open data files"):return
+        install_data(app,data,[spec]);app.file_channel_count=len(data);app.audit("TDMS ranges imported")
+    except Exception as exc:warn(app,"TDMS range",exc)
 
 def save_workspace(app):
     if not app.permitted("Export data & reports"):return
